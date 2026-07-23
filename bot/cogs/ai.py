@@ -1,15 +1,12 @@
 """AI chat via OpenRouter.
 
 The bot replies when mentioned in any channel, or to every message in
-channels listed in the ai_channels setting. Per-channel short-term memory.
-
-Everyone gets the lookup tools (web search, GitHub repo analysis). When the
-bot owner talks to it, the AI additionally gets the management tools from
-bot.agent_tools and performs server actions directly (kick, ban, roles,
-channels, etc.).
+channels listed in the ai_channels setting. Per-channel short-term memory
+plus optional long-term summary memory when older turns roll off.
 """
 import logging
-from collections import defaultdict, deque
+import time
+from collections import deque
 
 import discord
 from discord import app_commands
@@ -23,9 +20,19 @@ from bot.utils import is_owner
 
 log = logging.getLogger("ai")
 
-HISTORY_LEN = 20  # messages of context kept per channel
+HISTORY_LEN = 20  # default messages of context kept per channel
+MEMORY_MIN = 5
+MEMORY_MAX = 100
+SUMMARY_SLOTS_DEFAULT = 5
+SUMMARY_SLOTS_MAX = 20
 MAX_AUTO_REPOS = 2  # GitHub links auto-analyzed per message
 MAX_TOOL_ROUNDS = 8  # model<->tool round trips per request
+
+SUMMARY_PROMPT = (
+    "Summarize this conversation excerpt in 2-4 concise sentences. "
+    "Keep names, decisions, preferences, and open questions. Third person. "
+    "No preamble — just the summary."
+)
 
 FEATURES = (
     "Beyond slash commands, you also handle: automod (banned words, invite "
@@ -76,7 +83,202 @@ OWNER_NOTE = (
 class AI(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.history: dict[int, deque] = defaultdict(lambda: deque(maxlen=HISTORY_LEN))
+        self.history: dict[int, deque] = {}
+        self.summaries: dict[int, list[dict]] = {}
+        self._summaries_loaded: set[int] = set()
+
+    async def memory_len(self, guild_id: int) -> int:
+        raw = await db.get_setting(guild_id, "ai_memory_size")
+        try:
+            size = int(raw if raw is not None else HISTORY_LEN)
+        except (TypeError, ValueError):
+            size = HISTORY_LEN
+        return max(MEMORY_MIN, min(size, MEMORY_MAX))
+
+    async def summary_slots(self, guild_id: int) -> int:
+        raw = await db.get_setting(guild_id, "ai_summary_slots")
+        try:
+            slots = int(raw if raw is not None else SUMMARY_SLOTS_DEFAULT)
+        except (TypeError, ValueError):
+            slots = SUMMARY_SLOTS_DEFAULT
+        return max(0, min(slots, SUMMARY_SLOTS_MAX))
+
+    async def _ensure_summaries_loaded(self, guild_id: int) -> None:
+        if guild_id in self._summaries_loaded:
+            return
+        stored = await db.get_setting(guild_id, "ai_summary_memory") or {}
+        for channel_id_str, entries in stored.items():
+            if entries:
+                self.summaries[int(channel_id_str)] = list(entries)
+        self._summaries_loaded.add(guild_id)
+
+    async def _persist_guild_summaries(self, guild_id: int) -> None:
+        guild = self.bot.get_guild(guild_id)
+        if guild is None:
+            return
+        data: dict[str, list] = {}
+        for channel_id, entries in self.summaries.items():
+            if guild.get_channel(channel_id) is not None and entries:
+                data[str(channel_id)] = entries
+        await db.set_setting(guild_id, "ai_summary_memory", data)
+
+    async def _channel_history(self, channel_id: int, guild_id: int) -> deque:
+        hist = self.history.get(channel_id)
+        if hist is None:
+            self.history[channel_id] = deque()
+            return self.history[channel_id]
+        maxlen = await self.memory_len(guild_id)
+        while len(hist) > maxlen:
+            batch = [hist.popleft() for _ in range(min(2, len(hist)))]
+            await self._summarize_batch(guild_id, channel_id, batch)
+        return hist
+
+    async def _channel_summary_list(self, guild_id: int, channel_id: int) -> list[dict]:
+        await self._ensure_summaries_loaded(guild_id)
+        return self.summaries.setdefault(channel_id, [])
+
+    def _reweight_summaries(self, entries: list[dict]) -> None:
+        n = len(entries)
+        for i, entry in enumerate(entries):
+            entry["weight"] = round((i + 1) / n, 2)
+
+    async def _summarize_batch(self, guild_id: int, channel_id: int, batch: list[dict]) -> None:
+        slots = await self.summary_slots(guild_id)
+        if slots <= 0 or not batch:
+            return
+        transcript = "\n".join(f"{m['role']}: {m['content']}" for m in batch)
+        model = await db.get_setting(guild_id, "ai_model")
+        try:
+            summary = await openrouter.chat(
+                [{"role": "system", "content": SUMMARY_PROMPT},
+                 {"role": "user", "content": transcript}],
+                model=model,
+                max_tokens=250,
+                temperature=0.3,
+            )
+        except openrouter.OpenRouterError as exc:
+            log.warning("Summary generation failed: %s", exc)
+            return
+        summary = (summary or "").strip()
+        if not summary:
+            return
+        entries = await self._channel_summary_list(guild_id, channel_id)
+        while len(entries) >= slots:
+            entries.pop(0)
+        entries.append({"summary": summary, "weight": 1.0, "ts": time.time()})
+        self._reweight_summaries(entries)
+        await self._persist_guild_summaries(guild_id)
+        log.info("Summarized %d message(s) for channel %s", len(batch), channel_id)
+
+    async def _make_room(self, channel_id: int, guild_id: int, hist: deque) -> None:
+        maxlen = await self.memory_len(guild_id)
+        while len(hist) >= maxlen:
+            batch = [hist.popleft() for _ in range(min(2, len(hist)))]
+            await self._summarize_batch(guild_id, channel_id, batch)
+
+    async def _format_summaries(self, guild_id: int, channel_id: int) -> str:
+        entries = await self._channel_summary_list(guild_id, channel_id)
+        if not entries:
+            return ""
+        lines = [
+            f"- (weight {e['weight']}) {e['summary']}"
+            for e in entries
+        ]
+        return "\n".join(lines)
+
+    async def clear_channel_memory(self, guild_id: int, channel_id: int) -> None:
+        self.history.pop(channel_id, None)
+        self.summaries.pop(channel_id, None)
+        await self._persist_guild_summaries(guild_id)
+
+    async def clear_guild_memory(self, guild_id: int) -> int:
+        guild = self.bot.get_guild(guild_id)
+        if guild is None:
+            return 0
+        cleared = 0
+        for channel_id in list(self.history):
+            if guild.get_channel(channel_id) is not None:
+                self.history.pop(channel_id, None)
+                cleared += 1
+        for channel_id in list(self.summaries):
+            if guild.get_channel(channel_id) is not None:
+                self.summaries.pop(channel_id, None)
+        await db.set_setting(guild_id, "ai_summary_memory", {})
+        self._summaries_loaded.discard(guild_id)
+        return cleared
+
+    def memory_status(self, guild_id: int) -> dict:
+        guild = self.bot.get_guild(guild_id)
+        channels = []
+        total_messages = 0
+        total_summaries = 0
+        if guild:
+            seen = set(self.history) | set(self.summaries)
+            for channel_id in seen:
+                channel = guild.get_channel(channel_id)
+                if channel is None:
+                    continue
+                hist = self.history.get(channel_id)
+                sums = self.summaries.get(channel_id) or []
+                msg_count = len(hist) if hist else 0
+                sum_count = len(sums)
+                if not msg_count and not sum_count:
+                    continue
+                channels.append({
+                    "channel_id": str(channel_id),
+                    "name": getattr(channel, "name", str(channel_id)),
+                    "messages": msg_count,
+                    "summaries": sum_count,
+                })
+                total_messages += msg_count
+                total_summaries += sum_count
+        return {
+            "channels": channels,
+            "total_messages": total_messages,
+            "total_summaries": total_summaries,
+        }
+
+    async def memory_recent_log(self, guild_id: int) -> dict:
+        """Recent verbatim AI chat memory for the dashboard."""
+        guild = self.bot.get_guild(guild_id)
+        channels = []
+        if guild:
+            for channel_id, hist in self.history.items():
+                if not hist:
+                    continue
+                channel = guild.get_channel(channel_id)
+                if channel is None:
+                    continue
+                channels.append({
+                    "id": str(channel_id),
+                    "name": channel.name,
+                    "lines": [
+                        {"role": msg["role"], "text": msg["content"]}
+                        for msg in hist
+                    ],
+                })
+            channels.sort(key=lambda c: len(c["lines"]), reverse=True)
+        return {"channels": channels}
+
+    async def memory_summaries_log(self, guild_id: int) -> dict:
+        """Long-term weighted summaries for the dashboard."""
+        await self._ensure_summaries_loaded(guild_id)
+        guild = self.bot.get_guild(guild_id)
+        channels = []
+        if guild:
+            for channel_id, entries in self.summaries.items():
+                if not entries:
+                    continue
+                channel = guild.get_channel(channel_id)
+                if channel is None:
+                    continue
+                channels.append({
+                    "id": str(channel_id),
+                    "name": channel.name,
+                    "summaries": list(entries),
+                })
+            channels.sort(key=lambda c: c["summaries"][-1]["ts"], reverse=True)
+        return {"channels": channels}
 
     async def build_system_prompt(self, guild: discord.Guild, owner: bool = False) -> str:
         """Persona from settings plus a self-awareness section: who the bot is,
@@ -111,19 +313,26 @@ class AI(commands.Cog):
 
     async def generate_reply(self, message: discord.Message) -> str:
         guild_id = message.guild.id
+        channel_id = message.channel.id
         owner = is_owner(message.author.id)
         system_prompt = await self.build_system_prompt(message.guild, owner)
+        summary_block = await self._format_summaries(guild_id, channel_id)
+        if summary_block:
+            system_prompt += (
+                "\n\n[Earlier in this channel — summarized from older turns. "
+                "Higher weight = more recent summary.]\n"
+                f"{summary_block}"
+            )
         model = await db.get_setting(guild_id, "ai_model")
-        channel_history = self.history[message.channel.id]
+        channel_history = await self._channel_history(channel_id, guild_id)
 
         content = message.content.replace(self.bot.user.mention, "").strip() or "(no text)"
 
-        # Auto-attach repo details when the message contains GitHub links, so
-        # the bot can analyze them (and follow-ups keep the context in history).
         for repo_owner, name in tools.find_repo_refs(content)[:MAX_AUTO_REPOS]:
             info = await tools.run_tool("github_repo", {"repo": f"{repo_owner}/{name}"})
             content += f"\n\n[attached context for github.com/{repo_owner}/{name}]\n{info}"
 
+        await self._make_room(channel_id, guild_id, channel_history)
         channel_history.append({"role": "user", "content": f"{message.author.display_name}: {content}"})
 
         schemas = list(tools.TOOL_SCHEMAS)
@@ -136,6 +345,7 @@ class AI(commands.Cog):
             tools=schemas, tool_handler=self._tool_handler(message),
             max_tool_rounds=MAX_TOOL_ROUNDS,
         )
+        await self._make_room(channel_id, guild_id, channel_history)
         channel_history.append({"role": "assistant", "content": reply})
         return reply
 
@@ -156,9 +366,18 @@ class AI(commands.Cog):
                 reply = await self.generate_reply(message)
             except openrouter.OpenRouterError as exc:
                 log.warning("OpenRouter error: %s", exc)
-                await message.reply("AI is unavailable right now.", mention_author=False)
+                err = str(exc)
+                if "No endpoints found" in err:
+                    msg = (
+                        "AI model isn't available on your OpenRouter account. "
+                        "Open the dashboard → Settings → AI model, and try `openai/gpt-4o-mini`."
+                    )
+                elif "OPENROUTER_API_KEY" in err:
+                    msg = "AI isn't configured — add an OpenRouter key in the dashboard (Settings → App configuration)."
+                else:
+                    msg = "AI is unavailable right now."
+                await message.reply(msg, mention_author=False)
                 return
-        # Discord message limit is 2000 chars
         for chunk in [reply[i:i + 1990] for i in range(0, len(reply), 1990)] or ["..."]:
             await message.reply(chunk, mention_author=False)
 
@@ -180,14 +399,25 @@ class AI(commands.Cog):
             )
         except openrouter.OpenRouterError as exc:
             log.warning("OpenRouter error: %s", exc)
-            await interaction.followup.send("AI is unavailable right now.")
+            err = str(exc)
+            if "No endpoints found" in err:
+                msg = (
+                    "AI model isn't available on your OpenRouter account. "
+                    "Change the model in dashboard Settings (try `openai/gpt-4o-mini`)."
+                )
+            elif "OPENROUTER_API_KEY" in err:
+                msg = "AI isn't configured — add an OpenRouter key in dashboard Settings."
+            else:
+                msg = "AI is unavailable right now."
+            await interaction.followup.send(msg)
             return
         await interaction.followup.send(reply[:1990])
 
     @app_commands.command(description="Clear the AI's memory of this channel")
     async def aireset(self, interaction: discord.Interaction):
-        self.history.pop(interaction.channel.id, None)
-        await interaction.response.send_message("AI memory cleared for this channel.", ephemeral=True)
+        await self.clear_channel_memory(interaction.guild.id, interaction.channel.id)
+        await interaction.response.send_message(
+            "AI memory cleared for this channel (recent + summaries).", ephemeral=True)
 
 
 async def setup(bot: commands.Bot):

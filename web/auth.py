@@ -8,13 +8,15 @@ from fastapi import HTTPException, Request
 
 import config
 
-# If SECRET_KEY isn't set, generate one per process (sessions reset on restart).
-_SECRET = (config.SECRET_KEY or secrets.token_hex(32)).encode()
 TOKEN_TTL = 7 * 86400  # 7 days
 
 
+def _secret_bytes() -> bytes:
+    return (config.SECRET_KEY or secrets.token_hex(32)).encode()
+
+
 def _sign(payload: str) -> str:
-    return hmac.new(_SECRET, payload.encode(), hashlib.sha256).hexdigest()
+    return hmac.new(_secret_bytes(), payload.encode(), hashlib.sha256).hexdigest()
 
 
 def create_token() -> str:

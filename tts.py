@@ -62,7 +62,16 @@ async def synthesize(text: str) -> bytes | None:
         audio = await _fish(text)
         if audio:
             return audio
-    return await _edge(strip_voice_tags(text))
+    voice = await _edge_voice()
+    return await _edge(strip_voice_tags(text), voice)
+
+
+async def _edge_voice() -> str:
+    """Read the configured edge-tts voice (always fresh from DB)."""
+    import app_config
+
+    data = await app_config.load_all_readonly()
+    return str(data.get("edge_tts_voice") or "en-US-GuyNeural")
 
 
 async def _fish(text: str) -> bytes | None:
@@ -86,15 +95,16 @@ async def _fish(text: str) -> bytes | None:
         return None
 
 
-async def _edge(text: str) -> bytes | None:
+async def _edge(text: str, voice: str) -> bytes | None:
     try:
         import edge_tts
 
+        log.info("edge-tts voice: %s", voice)
         buf = bytearray()
-        async for chunk in edge_tts.Communicate(text[:800], voice="en-US-GuyNeural").stream():
+        async for chunk in edge_tts.Communicate(text[:800], voice=voice).stream():
             if chunk["type"] == "audio":
                 buf += chunk["data"]
         return bytes(buf) or None
     except Exception as exc:
-        log.info("edge-tts unavailable (%s)", exc)
+        log.warning("edge-tts failed for %s (%s)", voice, exc)
         return None

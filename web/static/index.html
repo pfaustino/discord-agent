@@ -5,9 +5,22 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#1e1f22">
   <title>Discord Agent</title>
-  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="/static/style.css?v=9">
 </head>
 <body>
+
+  <!-- Setup wizard -->
+  <div id="setup-screen" class="hidden">
+    <div class="setup-shell">
+      <div id="setup-progress" class="setup-progress"></div>
+      <p id="setup-step-label" class="setup-step-label muted"></p>
+      <div id="setup-content"></div>
+      <div class="setup-nav">
+        <button type="button" class="btn ghost" id="setup-back">Back</button>
+        <button type="button" class="btn primary" id="setup-next">Continue</button>
+      </div>
+    </div>
+  </div>
 
   <!-- Login -->
   <div id="login-screen" class="hidden">
@@ -35,7 +48,7 @@
       <button data-tab="overview" class="active"><span>&#x1F4CA;</span>Overview</button>
       <button data-tab="members"><span>&#x1F465;</span>Members</button>
       <button data-tab="server"><span>&#x1F3E0;</span>Server</button>
-      <button data-tab="voice"><span>&#x1F399;</span>Voice</button>
+      <button data-tab="memory"><span>&#x1F9E0;</span>Memory</button>
       <button data-tab="mod"><span>&#x1F6E1;</span>Mod</button>
       <button data-tab="settings"><span>&#x2699;</span>Settings</button>
     </nav>
@@ -48,6 +61,7 @@
 
   <div id="toast" class="hidden"></div>
 
-  <script src="/static/app.js"></script>
+  <script src="/static/onboarding.js?v=6"></script>
+  <script src="/static/app.js?v=9"></script>
 </body>
 </html>

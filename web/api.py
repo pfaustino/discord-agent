@@ -12,6 +12,7 @@ from pydantic import BaseModel
 import db
 from bot.utils import log_action
 from web.auth import check_password, create_token, require_auth, TOKEN_TTL
+from web.onboarding import UpdateAppConfigBody, update_app_config
 
 router = APIRouter()
 protected = APIRouter(dependencies=[Depends(require_auth)])
@@ -135,6 +136,22 @@ async def set_presence(body: PresenceBody, request: Request):
     return {"ok": True}
 
 
+@protected.get("/app-config")
+async def get_app_config():
+    import app_config
+    return await app_config.public_snapshot()
+
+
+@protected.put("/app-config")
+async def put_app_config(body: UpdateAppConfigBody, request: Request):
+    snapshot = await update_app_config(body)
+    starter = getattr(request.app.state, "start_bot", None)
+    if body.discord_token.strip() and starter:
+        import asyncio
+        asyncio.create_task(starter())
+    return snapshot
+
+
 @protected.get("/guilds")
 async def guilds(request: Request):
     return [
@@ -183,8 +200,62 @@ async def put_settings(guild_id: str, body: dict, request: Request):
     for key, value in body.items():
         if key not in db.DEFAULTS:
             raise HTTPException(status_code=400, detail=f"Unknown setting: {key}")
+        if key == "ai_memory_size":
+            try:
+                value = max(5, min(int(value), 100))
+            except (TypeError, ValueError):
+                raise HTTPException(status_code=400, detail="ai_memory_size must be a number between 5 and 100")
+        if key == "ai_summary_slots":
+            try:
+                value = max(0, min(int(value), 20))
+            except (TypeError, ValueError):
+                raise HTTPException(status_code=400, detail="ai_summary_slots must be a number between 0 and 20")
+        if key == "ai_summary_memory":
+            if not isinstance(value, dict):
+                raise HTTPException(status_code=400, detail="ai_summary_memory must be an object")
         await db.set_setting(g.id, key, value)
     return {"ok": True}
+
+
+@protected.get("/guilds/{guild_id}/ai/memory")
+async def ai_memory_status(guild_id: str, request: Request):
+    g = get_guild(request, guild_id)
+    cog = get_bot(request).get_cog("AI")
+    if cog is None:
+        raise HTTPException(status_code=503, detail="AI cog not loaded")
+    status = cog.memory_status(g.id)
+    status["memory_size"] = await cog.memory_len(g.id)
+    status["summary_slots"] = await cog.summary_slots(g.id)
+    return status
+
+
+@protected.get("/guilds/{guild_id}/memory/recent")
+async def memory_recent_log(guild_id: str, request: Request):
+    g = get_guild(request, guild_id)
+    cog = get_bot(request).get_cog("AI")
+    if cog is None:
+        raise HTTPException(status_code=503, detail="AI cog not loaded")
+    return await cog.memory_recent_log(g.id)
+
+
+@protected.get("/guilds/{guild_id}/memory/summaries")
+async def memory_summaries_log(guild_id: str, request: Request):
+    g = get_guild(request, guild_id)
+    cog = get_bot(request).get_cog("AI")
+    if cog is None:
+        raise HTTPException(status_code=503, detail="AI cog not loaded")
+    return await cog.memory_summaries_log(g.id)
+
+
+@protected.post("/guilds/{guild_id}/ai/reset-memory")
+async def reset_ai_memory(guild_id: str, request: Request):
+    g = get_guild(request, guild_id)
+    cog = get_bot(request).get_cog("AI")
+    if cog is None:
+        raise HTTPException(status_code=503, detail="AI cog not loaded")
+    cleared = await cog.clear_guild_memory(g.id)
+    await log_action(g, "ai_reset", DASHBOARD_ACTOR, f"{cleared} channel(s)", "memory cleared")
+    return {"ok": True, "channels_cleared": cleared}
 
 
 # -- members ----------------------------------------------------------------

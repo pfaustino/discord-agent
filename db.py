@@ -14,6 +14,10 @@ import config
 _db: aiosqlite.Connection | None = None
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS app_config (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS guild_settings (
     guild_id INTEGER NOT NULL,
     key      TEXT NOT NULL,
@@ -66,9 +70,12 @@ DEFAULTS = {
         "walls of text, no lectures."
     ),
     "ai_channels": [],
+    "ai_memory_size": 20,
+    "ai_summary_slots": 5,
+    "ai_summary_memory": {},
     # voice monitoring (audio capture via the Node.js sidecar in listener/)
     "voice_enabled": True,
-    "voice_wake_words": ["hey max", "hey andrew"],
+    "voice_wake_words": ["hey sara"],
     # global presence (guild_id 0)
     "presence_status": "online",
     "presence_activity_type": "playing",
@@ -92,6 +99,25 @@ async def close_db() -> None:
     if _db is not None:
         await _db.close()
         _db = None
+
+
+# -- app config (global, not per-guild) -------------------------------------
+
+async def get_app_config(key: str):
+    cur = await _db.execute("SELECT value FROM app_config WHERE key = ?", (key,))
+    row = await cur.fetchone()
+    if row is None:
+        return None
+    return json.loads(row["value"])
+
+
+async def set_app_config(key: str, value) -> None:
+    await _db.execute(
+        "INSERT INTO app_config (key, value) VALUES (?, ?) "
+        "ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+        (key, json.dumps(value)),
+    )
+    await _db.commit()
 
 
 # -- settings ---------------------------------------------------------------

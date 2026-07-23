@@ -9,6 +9,7 @@ import discord
 
 from web.api import router
 from web.internal import router as internal_router
+from web.onboarding import router as setup_router
 
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 
@@ -17,6 +18,7 @@ def create_app(bot) -> FastAPI:
     app = FastAPI(title="Discord Agent Dashboard", docs_url=None, redoc_url=None)
     app.state.bot = bot
     app.include_router(router, prefix="/api")
+    app.include_router(setup_router, prefix="/api")
     app.include_router(internal_router, prefix="/internal")
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
