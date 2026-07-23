@@ -152,6 +152,12 @@ async def put_app_config(body: UpdateAppConfigBody, request: Request):
     return snapshot
 
 
+@protected.post("/tasks/test")
+async def test_task_api():
+    import task_api
+    return await task_api.test_connection()
+
+
 @protected.get("/guilds")
 async def guilds(request: Request):
     return [

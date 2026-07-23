@@ -76,6 +76,9 @@ DEFAULTS = {
     # voice monitoring (audio capture via the Node.js sidecar in listener/)
     "voice_enabled": True,
     "voice_wake_words": ["hey sara"],
+    # external task management API (per-guild)
+    "tasks_enabled": False,
+    "tasks_default_project": None,
     # global presence (guild_id 0)
     "presence_status": "online",
     "presence_activity_type": "playing",

@@ -14,6 +14,7 @@ from discord.ext import commands
 
 import db
 import openrouter
+import task_api
 import tools
 from bot import agent_tools
 from bot.utils import is_owner
@@ -51,7 +52,12 @@ ABILITIES = (
     "their message automatically — dig in and actually work with them on it: "
     "what it does, the stack, how it's structured, what's cool, what could be "
     "better, ideas for where to take it. Use tools when they'd help; don't "
-    "guess at things you can check."
+    "guess at things you can check.\n"
+    "When task management is enabled on this server, you can create_task, "
+    "list_tasks, and get_task. If someone asks you to remember something, "
+    "track a follow-up, add a todo, or put something on a list, turn their "
+    "request into a clear title and description and create the task. Confirm "
+    "what you created and share the task ID or link from the tool result."
 )
 
 MEMBER_NOTE = (
@@ -301,10 +307,14 @@ class AI(commands.Cog):
         )
 
     def _tool_handler(self, message: discord.Message):
-        """Route tool calls: management tools to agent_tools, the rest to tools."""
+        """Route tool calls: management tools to agent_tools, tasks to task_api."""
+        ctx = task_api.TaskContext.from_message(message)
+
         async def handler(name: str, args: dict) -> str:
             if name in agent_tools.TOOLS:
                 result = await agent_tools.execute(self.bot, message, name, args)
+            elif name in task_api.TOOL_NAMES:
+                result = await task_api.run_tool(ctx, name, args)
             else:
                 result = await tools.run_tool(name, args)
             log.info("AI tool %s(%s) -> %s", name, str(args)[:200], result[:200])
@@ -336,6 +346,7 @@ class AI(commands.Cog):
         channel_history.append({"role": "user", "content": f"{message.author.display_name}: {content}"})
 
         schemas = list(tools.TOOL_SCHEMAS)
+        schemas += await task_api.schemas_for_guild(guild_id)
         if owner:
             schemas += agent_tools.TOOL_SCHEMAS
 

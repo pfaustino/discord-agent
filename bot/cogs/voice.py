@@ -26,6 +26,7 @@ from discord.ext import commands
 import config
 import db
 import openrouter
+import task_api
 import tools
 import transcription
 import tts
@@ -166,12 +167,21 @@ class Voice(commands.Cog):
         lines = [e for e in self.transcripts[channel.id] if not e.get("system")][-CONTEXT_LINES:]
         transcript = "\n".join(f"{e['name']}: {e['text']}" for e in lines)
         model = await db.get_setting(guild.id, "ai_model")
+        ctx = task_api.TaskContext.from_voice(guild, channel, speaker_name)
+
+        async def tool_handler(name: str, args: dict) -> str:
+            if name in task_api.TOOL_NAMES:
+                return await task_api.run_tool(ctx, name, args)
+            return await tools.run_tool(name, args)
+
+        schemas = list(tools.TOOL_SCHEMAS)
+        schemas += await task_api.schemas_for_guild(guild.id)
         try:
             reply = await openrouter.chat(
                 [{"role": "system", "content": system_prompt},
                  {"role": "user", "content": f"[voice transcript of #{channel.name}]\n{transcript}"}],
                 model=model,
-                tools=tools.TOOL_SCHEMAS, tool_handler=tools.run_tool,
+                tools=schemas, tool_handler=tool_handler,
             )
         except openrouter.OpenRouterError as exc:
             log.warning("Wake response failed: %s", exc)

@@ -699,6 +699,7 @@ const SETTINGS_SECTIONS = [
   { id: "welcome", label: "Welcome", desc: "Greetings & autorole" },
   { id: "automod", label: "Automod", desc: "Banned words & filters" },
   { id: "ai", label: "AI chat", desc: "Model & prompts" },
+  { id: "tasks", label: "Tasks", desc: "External task API" },
   { id: "logging", label: "Logging", desc: "Mod log channel" },
   { id: "presence", label: "Presence", desc: "Bot status & activity" },
 ];
@@ -853,6 +854,36 @@ function settingsPanelAI(settings, textChannels, memoryStatus) {
     </div>`;
 }
 
+function settingsPanelTasks(settings, appCfg) {
+  const apiUrl = appCfg.task_api_url || "";
+  return `
+    <h2 class="settings-panel-title">Task management</h2>
+    <p class="muted settings-panel-lead">Connect Sara to an external task API. She can create and look up tasks from chat and voice when enabled.</p>
+    <div class="card">
+      <h3 style="font-size:15px;margin-bottom:8px">API connection</h3>
+      <p class="muted" style="margin-bottom:12px">Your API should expose <code>POST /tasks</code>, <code>GET /tasks</code>, and <code>GET /tasks/:id</code> with JSON bodies. Bearer auth is optional.</p>
+      <label class="field"><span class="lbl">API base URL</span>
+        <input id="t-task_api_url" value="${esc(apiUrl)}" placeholder="https://tasks.example.com/api/v1"></label>
+      <label class="field"><span class="lbl">API key ${appCfg.task_api_key_set ? "(set)" : ""}</span>
+        <input type="password" id="t-task_api_key" placeholder="Leave blank to keep current" autocomplete="off"></label>
+      <div class="inline-form" style="margin-top:8px">
+        <button class="btn" type="button" id="test-task-api">Test connection</button>
+        <span id="task-api-test-result" class="muted"></span>
+      </div>
+      <button class="btn primary full" id="save-task-api" style="margin-top:12px">Save API settings</button>
+    </div>
+    <div class="card" style="margin-top:12px">
+      <h3 style="font-size:15px;margin-bottom:8px">This server</h3>
+      <label class="toggle"><input type="checkbox" id="s-tasks_enabled"
+        ${settings.tasks_enabled ? "checked" : ""}> Enable task tools for Sara</label>
+      <label class="field"><span class="lbl">Default project / list ID</span>
+        <input id="s-tasks_default_project" value="${esc(settings.tasks_default_project || "")}"
+          placeholder="Optional — sent as project_id on create"></label>
+      <p class="muted">When enabled, Sara uses <code>create_task</code>, <code>list_tasks</code>, and <code>get_task</code> in AI chat and voice wake responses.</p>
+      <button class="btn primary full" id="save-task-settings">Save server settings</button>
+    </div>`;
+}
+
 function settingsPanelLogging(settings, channelOptions) {
   return `
     <h2 class="settings-panel-title">Logging</h2>
@@ -978,6 +1009,39 @@ function bindSettingsHandlers(section) {
       });
     };
   }
+  if (section === "tasks") {
+    $("#save-task-api").onclick = async () => {
+      const body = { task_api_url: $("#t-task_api_url").value.trim() };
+      const key = $("#t-task_api_key").value;
+      if (key) body.task_api_key = key;
+      await api("/app-config", { method: "PUT", body });
+      toast("Task API settings saved");
+    };
+    $("#test-task-api").onclick = async () => {
+      const el = $("#task-api-test-result");
+      el.textContent = "Testing…";
+      try {
+        const result = await api("/tasks/test", { method: "POST" });
+        el.textContent = result.ok
+          ? `OK (HTTP ${result.status || 200})`
+          : `Failed: ${result.error || "unknown error"}`;
+        el.className = result.ok ? "badge" : "muted";
+      } catch (e) {
+        el.textContent = `Failed: ${e.message}`;
+        el.className = "muted";
+      }
+    };
+    $("#save-task-settings").onclick = async () => {
+      await api(`/guilds/${state.guildId}/settings`, {
+        method: "PUT",
+        body: {
+          tasks_enabled: $("#s-tasks_enabled").checked,
+          tasks_default_project: $("#s-tasks_default_project").value.trim() || null,
+        },
+      });
+      toast("Task settings saved");
+    };
+  }
   if (section === "logging") {
     $("#save-logging-settings").onclick = async () => {
       await api(`/guilds/${state.guildId}/settings`, {
@@ -1026,6 +1090,7 @@ async function renderSettings() {
     welcome: () => settingsPanelWelcome(settings, channelOptions, roleOptions),
     automod: () => settingsPanelAutomod(settings),
     ai: () => settingsPanelAI(settings, textChannels, memoryStatus),
+    tasks: () => settingsPanelTasks(settings, appCfg),
     logging: () => settingsPanelLogging(settings, channelOptions),
     presence: () => settingsPanelPresence(me),
   };
