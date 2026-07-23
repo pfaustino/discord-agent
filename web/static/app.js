@@ -448,7 +448,7 @@ async function renderServer() {
 function memorySubNavHtml() {
   const panes = [
     { id: "transcription", label: "Transcription" },
-    { id: "longterm", label: "Long Term" },
+    { id: "longterm", label: "Long Term Memory" },
   ];
   return `<div class="memory-subnav">${panes.map((p) =>
     `<button type="button" class="memory-subnav-item${state.memoryPane === p.id ? " active" : ""}"
