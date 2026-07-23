@@ -12,6 +12,7 @@ from datetime import timedelta
 
 import discord
 
+import cursor_api
 import db
 from bot.utils import is_owner, log_action
 
@@ -356,6 +357,21 @@ async def _delete_role(bot, message, args):
     return f"Deleted role {name}."
 
 
+async def _launch_cursor_agent(bot, message, args):
+    if not await cursor_api.is_enabled(message.guild.id):
+        raise ToolError(
+            "Cursor cloud agents are disabled on this server. "
+            "Enable them in the dashboard under Settings → Cursor."
+        )
+    return await cursor_api.launch_agent(message.guild.id, args)
+
+
+async def _cursor_agent_status(bot, message, args):
+    if not await cursor_api.is_enabled(message.guild.id):
+        raise ToolError("Cursor cloud agents are disabled on this server.")
+    return await cursor_api.agent_status(message.guild.id, args)
+
+
 # -- registry ---------------------------------------------------------------
 
 _USER = _str("The member: a mention, user ID, username, or display name")
@@ -455,7 +471,34 @@ TOOLS: dict[str, tuple[dict, callable]] = {
     "delete_role": (_schema(
         "delete_role", "Delete a role.",
         {"role": _str("Role name, mention, or ID")}, ["role"]), _delete_role),
+    "launch_cursor_agent": (_schema(
+        "launch_cursor_agent",
+        "Launch a Cursor cloud agent to implement a coding task in a GitHub repo. "
+        "Turn the owner's request into a clear, actionable prompt. Returns agent and run IDs "
+        "plus a dashboard link — use cursor_agent_status to check progress.",
+        {
+            "prompt": _str("Detailed task instructions for the coding agent"),
+            "name": _str("Short display name for the agent (optional)"),
+            "model": _str("Model ID override (optional — uses server default)"),
+            "repo": _str("GitHub repo URL override (optional — uses server default)"),
+            "branch": _str("Starting branch override (optional)"),
+            "mode": _str("'agent' to code directly, 'plan' to plan first (optional)"),
+            "auto_create_pr": {"type": "boolean", "description": "Open a PR when done (optional)"},
+        },
+        ["prompt"],
+    ), _launch_cursor_agent),
+    "cursor_agent_status": (_schema(
+        "cursor_agent_status",
+        "Check status of a Cursor cloud agent run. Use after launch_cursor_agent.",
+        {
+            "agent_id": _str("Agent ID (bc-...) from launch_cursor_agent"),
+            "run_id": _str("Run ID override (optional — uses latest run)"),
+        },
+        ["agent_id"],
+    ), _cursor_agent_status),
 }
+
+CURSOR_TOOL_NAMES = frozenset({"launch_cursor_agent", "cursor_agent_status"})
 
 TOOL_SCHEMAS = [entry[0] for entry in TOOLS.values()]
 

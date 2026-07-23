@@ -29,6 +29,7 @@ CONFIG_KEYS = (
     "fish_tts_model",
     "fish_voice_id",
     "edge_tts_voice",
+    "cursor_api_key",
 )
 
 # Map config key -> env var name (when different)
@@ -47,6 +48,7 @@ _ENV_MAP = {
     "fish_tts_model": "FISH_TTS_MODEL",
     "fish_voice_id": "FISH_VOICE_ID",
     "edge_tts_voice": "EDGE_TTS_VOICE",
+    "cursor_api_key": "CURSOR_API_KEY",
 }
 
 DEFAULTS: dict[str, Any] = {
@@ -65,6 +67,7 @@ DEFAULTS: dict[str, Any] = {
     "fish_tts_model": "s1",
     "fish_voice_id": "",
     "edge_tts_voice": "en-US-GuyNeural",
+    "cursor_api_key": "",
 }
 
 SECRET_KEYS = frozenset({
@@ -75,6 +78,7 @@ SECRET_KEYS = frozenset({
     "dashboard_password",
     "secret_key",
     "fish_api_key",
+    "cursor_api_key",
 })
 
 REQUIRED_FOR_SETUP = ("discord_token", "owner_id", "dashboard_password", "secret_key")

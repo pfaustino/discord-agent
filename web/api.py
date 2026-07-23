@@ -152,6 +152,19 @@ async def put_app_config(body: UpdateAppConfigBody, request: Request):
     return snapshot
 
 
+@protected.post("/cursor/test")
+async def test_cursor_api():
+    import cursor_api
+    return await cursor_api.test_connection()
+
+
+@protected.get("/cursor/models")
+async def cursor_models():
+    import cursor_api
+    items = await cursor_api.list_models()
+    return {"models": items}
+
+
 @protected.get("/guilds")
 async def guilds(request: Request):
     return [

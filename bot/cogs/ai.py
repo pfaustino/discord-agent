@@ -14,6 +14,7 @@ from discord.ext import commands
 
 import db
 import openrouter
+import cursor_api
 import tools
 from bot import agent_tools
 from bot.utils import is_owner
@@ -65,6 +66,10 @@ OWNER_NOTE = (
     "DIRECTLY perform server actions: moderation (kick, ban, timeout, warn, "
     "purge, slowmode, lock), channel and role management, sending messages, "
     "and server lookups.\n"
+    "When Cursor cloud agents are enabled on this server, you can "
+    "launch_cursor_agent to send coding tasks to Cursor (cloud VM on GitHub) "
+    "and cursor_agent_status to check progress. Turn vague requests into "
+    "clear prompts before launching.\n"
     "- When the owner asks you to do something, do it yourself with your "
     "tools. NEVER tell the owner to run slash commands — you are the one "
     "with hands.\n"
@@ -337,7 +342,13 @@ class AI(commands.Cog):
 
         schemas = list(tools.TOOL_SCHEMAS)
         if owner:
-            schemas += agent_tools.TOOL_SCHEMAS
+            owner_schemas = list(agent_tools.TOOL_SCHEMAS)
+            if not await cursor_api.is_enabled(guild_id):
+                owner_schemas = [
+                    s for s in owner_schemas
+                    if s["function"]["name"] not in agent_tools.CURSOR_TOOL_NAMES
+                ]
+            schemas += owner_schemas
 
         messages = [{"role": "system", "content": system_prompt}, *channel_history]
         reply = await openrouter.chat(

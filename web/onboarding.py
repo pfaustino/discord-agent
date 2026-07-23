@@ -48,6 +48,7 @@ class UpdateAppConfigBody(BaseModel):
     fish_tts_model: str | None = None
     fish_voice_id: str | None = None
     edge_tts_voice: str | None = None
+    cursor_api_key: str = ""
 
 
 async def _require_setup_mode() -> None:

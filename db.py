@@ -76,6 +76,13 @@ DEFAULTS = {
     # voice monitoring (audio capture via the Node.js sidecar in listener/)
     "voice_enabled": True,
     "voice_wake_words": ["hey sara"],
+    # Cursor cloud agents (owner-only, per-guild defaults)
+    "cursor_enabled": False,
+    "cursor_default_model": "",
+    "cursor_default_repo": "",
+    "cursor_default_branch": "main",
+    "cursor_auto_create_pr": False,
+    "cursor_mode": "agent",
     # global presence (guild_id 0)
     "presence_status": "online",
     "presence_activity_type": "playing",

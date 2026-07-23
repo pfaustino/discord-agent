@@ -699,6 +699,7 @@ const SETTINGS_SECTIONS = [
   { id: "welcome", label: "Welcome", desc: "Greetings & autorole" },
   { id: "automod", label: "Automod", desc: "Banned words & filters" },
   { id: "ai", label: "AI chat", desc: "Model & prompts" },
+  { id: "cursor", label: "Cursor", desc: "Cloud coding agents" },
   { id: "logging", label: "Logging", desc: "Mod log channel" },
   { id: "presence", label: "Presence", desc: "Bot status & activity" },
 ];
@@ -853,6 +854,53 @@ function settingsPanelAI(settings, textChannels, memoryStatus) {
     </div>`;
 }
 
+function settingsPanelCursor(settings, appCfg, cursorModels) {
+  const models = cursorModels || [];
+  const currentModel = settings.cursor_default_model || "";
+  const modelOptions = [
+    `<option value="">Server / account default</option>`,
+    ...models.map((m) =>
+      `<option value="${esc(m.id)}" ${currentModel === m.id ? "selected" : ""}>${esc(m.displayName || m.id)}</option>`),
+  ].join("");
+  const mode = settings.cursor_mode || "agent";
+  return `
+    <h2 class="settings-panel-title">Cursor cloud agents</h2>
+    <p class="muted settings-panel-lead">Owner-only: Sara can launch Cursor cloud agents on GitHub repos from chat. Cloud-only for v1.</p>
+    <div class="card">
+      <h3 style="font-size:15px;margin-bottom:8px">API key</h3>
+      <p class="muted" style="margin-bottom:12px">From <a href="https://cursor.com/dashboard/api" target="_blank" rel="noopener">Cursor Dashboard → API Keys</a>.</p>
+      <label class="field"><span class="lbl">Cursor API key ${appCfg.cursor_api_key_set ? "(set)" : ""}</span>
+        <input type="password" id="c-cursor_api_key" placeholder="Leave blank to keep current" autocomplete="off"></label>
+      <div class="inline-form" style="margin-top:8px">
+        <button class="btn" type="button" id="test-cursor-api">Test connection</button>
+        <span id="cursor-api-test-result" class="muted"></span>
+      </div>
+      <button class="btn primary full" id="save-cursor-api" style="margin-top:12px">Save API key</button>
+    </div>
+    <div class="card" style="margin-top:12px">
+      <h3 style="font-size:15px;margin-bottom:8px">This server</h3>
+      <label class="toggle"><input type="checkbox" id="s-cursor_enabled"
+        ${settings.cursor_enabled ? "checked" : ""}> Enable Cursor tools (owner only)</label>
+      <label class="field"><span class="lbl">Default GitHub repo URL</span>
+        <input id="s-cursor_default_repo" value="${esc(settings.cursor_default_repo || "")}"
+          placeholder="https://github.com/org/repo"></label>
+      <label class="field"><span class="lbl">Default branch</span>
+        <input id="s-cursor_default_branch" value="${esc(settings.cursor_default_branch || "main")}"></label>
+      <label class="field"><span class="lbl">Default model</span>
+        <select id="s-cursor_default_model">${modelOptions}</select>
+        <span class="muted">Or type a model ID: <input id="s-cursor_default_model_custom" value="${esc(currentModel && !models.some((m) => m.id === currentModel) ? currentModel : "")}" placeholder="optional override"></span></label>
+      <label class="field"><span class="lbl">Mode</span>
+        <select id="s-cursor_mode">
+          <option value="agent" ${mode === "agent" ? "selected" : ""}>Agent (code directly)</option>
+          <option value="plan" ${mode === "plan" ? "selected" : ""}>Plan (plan first)</option>
+        </select></label>
+      <label class="toggle"><input type="checkbox" id="s-cursor_auto_create_pr"
+        ${settings.cursor_auto_create_pr ? "checked" : ""}> Auto-create pull request when done</label>
+      <p class="muted">@mention Sara as the bot owner to launch agents. Tools: <code>launch_cursor_agent</code>, <code>cursor_agent_status</code>.</p>
+      <button class="btn primary full" id="save-cursor-settings">Save server settings</button>
+    </div>`;
+}
+
 function settingsPanelLogging(settings, channelOptions) {
   return `
     <h2 class="settings-panel-title">Logging</h2>
@@ -978,6 +1026,45 @@ function bindSettingsHandlers(section) {
       });
     };
   }
+  if (section === "cursor") {
+    $("#save-cursor-api").onclick = async () => {
+      const body = {};
+      const key = $("#c-cursor_api_key").value;
+      if (key) body.cursor_api_key = key;
+      await api("/app-config", { method: "PUT", body });
+      toast("Cursor API key saved");
+    };
+    $("#test-cursor-api").onclick = async () => {
+      const el = $("#cursor-api-test-result");
+      el.textContent = "Testing…";
+      try {
+        const result = await api("/cursor/test", { method: "POST" });
+        el.textContent = result.ok
+          ? `OK (${result.model_count ?? 0} models)`
+          : `Failed: ${result.error || "unknown error"}`;
+        el.className = result.ok ? "badge" : "muted";
+      } catch (e) {
+        el.textContent = `Failed: ${e.message}`;
+        el.className = "muted";
+      }
+    };
+    $("#save-cursor-settings").onclick = async () => {
+      const customModel = $("#s-cursor_default_model_custom").value.trim();
+      const selectModel = $("#s-cursor_default_model").value.trim();
+      await api(`/guilds/${state.guildId}/settings`, {
+        method: "PUT",
+        body: {
+          cursor_enabled: $("#s-cursor_enabled").checked,
+          cursor_default_repo: $("#s-cursor_default_repo").value.trim() || null,
+          cursor_default_branch: $("#s-cursor_default_branch").value.trim() || "main",
+          cursor_default_model: customModel || selectModel || "",
+          cursor_mode: $("#s-cursor_mode").value,
+          cursor_auto_create_pr: $("#s-cursor_auto_create_pr").checked,
+        },
+      });
+      toast("Cursor settings saved");
+    };
+  }
   if (section === "logging") {
     $("#save-logging-settings").onclick = async () => {
       await api(`/guilds/${state.guildId}/settings`, {
@@ -1003,13 +1090,14 @@ function bindSettingsHandlers(section) {
 }
 
 async function renderSettings() {
-  const [settings, channels, roles, me, appCfg, memoryStatus] = await Promise.all([
+  const [settings, channels, roles, me, appCfg, memoryStatus, cursorModels] = await Promise.all([
     api(`/guilds/${state.guildId}/settings`),
     api(`/guilds/${state.guildId}/channels`),
     api(`/guilds/${state.guildId}/roles`),
     api("/me"),
     api("/app-config"),
     api(`/guilds/${state.guildId}/ai/memory`).catch(() => ({ channels: [], total_messages: 0 })),
+    api("/cursor/models").catch(() => ({ models: [] })),
   ]);
   const textChannels = channels.filter((c) => c.type === "text");
   const channelOptions = (selected) =>
@@ -1026,6 +1114,7 @@ async function renderSettings() {
     welcome: () => settingsPanelWelcome(settings, channelOptions, roleOptions),
     automod: () => settingsPanelAutomod(settings),
     ai: () => settingsPanelAI(settings, textChannels, memoryStatus),
+    cursor: () => settingsPanelCursor(settings, appCfg, cursorModels.models),
     logging: () => settingsPanelLogging(settings, channelOptions),
     presence: () => settingsPanelPresence(me),
   };
