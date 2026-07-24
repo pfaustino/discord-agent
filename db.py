@@ -55,6 +55,13 @@ CREATE TABLE IF NOT EXISTS voice_transcripts (
     system     INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_voice_tx_guild_channel ON voice_transcripts (guild_id, channel_id, ts);
+CREATE TABLE IF NOT EXISTS user_preferences (
+    guild_id INTEGER NOT NULL,
+    user_id  INTEGER NOT NULL,
+    key      TEXT NOT NULL,
+    value    TEXT NOT NULL,
+    PRIMARY KEY (guild_id, user_id, key)
+);
 """
 
 DEFAULTS = {
@@ -99,6 +106,10 @@ DEFAULTS = {
     "presence_status": "online",
     "presence_activity_type": "playing",
     "presence_text": "",
+}
+
+USER_PREF_DEFAULTS = {
+    "long_term_memory_enabled": True,
 }
 
 
@@ -291,5 +302,27 @@ async def trim_voice_transcripts(guild_id: int, channel_id: int, keep: int = 300
         "ORDER BY ts DESC LIMIT -1 OFFSET ?"
         ")",
         (guild_id, channel_id, keep),
+    )
+    await _db.commit()
+
+
+# -- user preferences --------------------------------------------------------
+
+async def get_user_preference(guild_id: int, user_id: int, key: str):
+    cur = await _db.execute(
+        "SELECT value FROM user_preferences WHERE guild_id = ? AND user_id = ? AND key = ?",
+        (guild_id, user_id, key),
+    )
+    row = await cur.fetchone()
+    if row is None:
+        return USER_PREF_DEFAULTS.get(key)
+    return json.loads(row["value"])
+
+
+async def set_user_preference(guild_id: int, user_id: int, key: str, value) -> None:
+    await _db.execute(
+        "INSERT INTO user_preferences (guild_id, user_id, key, value) VALUES (?, ?, ?, ?) "
+        "ON CONFLICT (guild_id, user_id, key) DO UPDATE SET value = excluded.value",
+        (guild_id, user_id, key, json.dumps(value)),
     )
     await _db.commit()

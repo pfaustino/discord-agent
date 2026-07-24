@@ -108,6 +108,14 @@ class AI(commands.Cog):
             slots = SUMMARY_SLOTS_DEFAULT
         return max(0, min(slots, SUMMARY_SLOTS_MAX))
 
+    async def long_term_memory_enabled(self, guild_id: int, user_id: int) -> bool:
+        """Whether this user wants long-term memory for their AI conversations."""
+        value = await db.get_user_preference(guild_id, user_id, "long_term_memory_enabled")
+        return bool(value if value is not None else True)
+
+    async def set_long_term_memory(self, guild_id: int, user_id: int, enabled: bool) -> None:
+        await db.set_user_preference(guild_id, user_id, "long_term_memory_enabled", enabled)
+
     async def _ensure_summaries_loaded(self, guild_id: int) -> None:
         if guild_id in self._summaries_loaded:
             return
@@ -191,8 +199,12 @@ class AI(commands.Cog):
         ]
         return "\n".join(lines)
 
-    async def memory_summary_prompt(self, guild_id: int, channel_id: int) -> str:
+    async def memory_summary_prompt(
+        self, guild_id: int, channel_id: int, user_id: int | None = None,
+    ) -> str:
         """Long-term summary block for injection into a system prompt."""
+        if user_id is not None and not await self.long_term_memory_enabled(guild_id, user_id):
+            return ""
         block = await self._format_summaries(guild_id, channel_id)
         if not block:
             return ""
@@ -208,8 +220,11 @@ class AI(commands.Cog):
         channel_id: int,
         user_content: str,
         assistant_content: str,
+        user_id: int | None = None,
     ) -> None:
         """Record a user/assistant turn (text @mention or voice wake) into channel memory."""
+        if user_id is not None and not await self.long_term_memory_enabled(guild_id, user_id):
+            return
         hist = await self._channel_history(channel_id, guild_id)
         await self._make_room(channel_id, guild_id, hist)
         hist.append({"role": "user", "content": user_content})
@@ -348,9 +363,11 @@ class AI(commands.Cog):
         channel_id = message.channel.id
         owner = is_owner(message.author.id)
         system_prompt = await self.build_system_prompt(message.guild, owner)
-        system_prompt += await self.memory_summary_prompt(guild_id, channel_id)
+        system_prompt += await self.memory_summary_prompt(
+            guild_id, channel_id, message.author.id,
+        )
         model = await db.get_setting(guild_id, "ai_model")
-        channel_history = await self._channel_history(channel_id, guild_id)
+        use_memory = await self.long_term_memory_enabled(guild_id, message.author.id)
 
         content = message.content.replace(self.bot.user.mention, "").strip() or "(no text)"
 
@@ -358,8 +375,14 @@ class AI(commands.Cog):
             info = await tools.run_tool("github_repo", {"repo": f"{repo_owner}/{name}"})
             content += f"\n\n[attached context for github.com/{repo_owner}/{name}]\n{info}"
 
-        await self._make_room(channel_id, guild_id, channel_history)
-        channel_history.append({"role": "user", "content": f"{message.author.display_name}: {content}"})
+        user_turn = {"role": "user", "content": f"{message.author.display_name}: {content}"}
+        if use_memory:
+            channel_history = await self._channel_history(channel_id, guild_id)
+            await self._make_room(channel_id, guild_id, channel_history)
+            channel_history.append(user_turn)
+            history_for_request = channel_history
+        else:
+            history_for_request = [user_turn]
 
         schemas = list(tools.TOOL_SCHEMAS)
         if owner:
@@ -371,14 +394,15 @@ class AI(commands.Cog):
                 ]
             schemas += owner_schemas
 
-        messages = [{"role": "system", "content": system_prompt}, *channel_history]
+        messages = [{"role": "system", "content": system_prompt}, *history_for_request]
         reply = await openrouter.chat(
             messages, model=model,
             tools=schemas, tool_handler=self._tool_handler(message),
             max_tool_rounds=MAX_TOOL_ROUNDS,
         )
-        await self._make_room(channel_id, guild_id, channel_history)
-        channel_history.append({"role": "assistant", "content": reply})
+        if use_memory:
+            await self._make_room(channel_id, guild_id, channel_history)
+            channel_history.append({"role": "assistant", "content": reply})
         return reply
 
     @commands.Cog.listener()
@@ -450,6 +474,34 @@ class AI(commands.Cog):
         await self.clear_channel_memory(interaction.guild.id, interaction.channel.id)
         await interaction.response.send_message(
             "AI memory cleared for this channel (recent + summaries).", ephemeral=True)
+
+    @app_commands.command(
+        description="Enable or disable long-term memory for your AI conversations",
+    )
+    @app_commands.describe(
+        enabled="Turn long-term memory on or off (omit to flip the current setting)",
+    )
+    async def memorytoggle(
+        self,
+        interaction: discord.Interaction,
+        enabled: bool | None = None,
+    ):
+        guild_id = interaction.guild.id
+        user_id = interaction.user.id
+        current = await self.long_term_memory_enabled(guild_id, user_id)
+        new_value = (not current) if enabled is None else enabled
+        await self.set_long_term_memory(guild_id, user_id, new_value)
+        if new_value:
+            msg = (
+                "Long-term memory is **enabled**. I'll remember earlier conversations "
+                "with you in this server when we chat."
+            )
+        else:
+            msg = (
+                "Long-term memory is **disabled**. I won't store or recall earlier "
+                "conversations with you in this server."
+            )
+        await interaction.response.send_message(msg, ephemeral=True)
 
 
 async def setup(bot: commands.Bot):
