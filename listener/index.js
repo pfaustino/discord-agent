@@ -33,7 +33,12 @@ const PY_URL = process.env.PY_URL || `http://127.0.0.1:${process.env.PORT || 800
 const SIDECAR_PORT = parseInt(process.env.SIDECAR_PORT || '8091', 10);
 
 const SILENCE_MS = 1000;              // silence gap that ends an utterance
-const MIN_PCM_BYTES = 48000 * 2 * 2 * 0.4; // drop blips under 0.4s
+// Blips under this length are background noise triggering the voice gate,
+// not speech — don't even send them (Whisper hallucinates "thank you" /
+// "bye-bye" on noise). Tune via env if it clips real speech.
+const MIN_UTTERANCE_SEC = parseFloat(process.env.MIN_UTTERANCE_SEC || '1.5');
+const MIN_PCM_BYTES = 48000 * 2 * 2 * MIN_UTTERANCE_SEC;
+const MIN_RMS = parseInt(process.env.MIN_UTTERANCE_RMS || '300', 10); // loudness floor
 const CONFIG_TTL_MS = 30_000;
 
 if (!TOKEN) {
@@ -194,6 +199,21 @@ async function rebalance(guild) {
 
 // -- audio receive ----------------------------------------------------------
 
+function pcmRms(buf) {
+  // Root-mean-square loudness of 16-bit PCM, sampled (~4000 points max)
+  const samples = Math.floor(buf.length / 2);
+  if (!samples) return 0;
+  const step = Math.max(1, Math.floor(samples / 4000));
+  let sum = 0;
+  let count = 0;
+  for (let i = 0; i < samples; i += step) {
+    const v = buf.readInt16LE(i * 2);
+    sum += v * v;
+    count += 1;
+  }
+  return Math.sqrt(sum / count);
+}
+
 function subscribeUser(connection, guild, userId) {
   const key = `${guild.id}:${userId}`;
   if (activeStreams.has(key)) return;
@@ -221,7 +241,12 @@ function subscribeUser(connection, guild, userId) {
     clearTimeout(watchdog);
     if (!activeStreams.delete(key)) return; // already finished
     const pcm = Buffer.concat(chunks);
-    if (pcm.length < MIN_PCM_BYTES) return;
+    if (pcm.length < MIN_PCM_BYTES) return; // too short — noise blip
+    const rms = pcmRms(pcm);
+    if (rms < MIN_RMS) {
+      console.log(`[listener] dropped quiet blip (rms ${Math.round(rms)}) from ${userId}`);
+      return;
+    }
     postUtterance(guild, connection.joinConfig.channelId, userId, pcm)
       .catch((err) => console.error('[listener] utterance post failed:', err.message));
   };
