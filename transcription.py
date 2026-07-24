@@ -20,8 +20,12 @@ SAMPLE_WIDTH = 2
 
 # Whisper tends to hallucinate these on silence/noise-only clips
 JUNK = {
-    "you", "bye", "thank you", "thanks", "thank you for watching",
-    "thanks for watching", "subscribe", ".", "the",
+    "you", "bye", "bye bye", "bye-bye", "thank you", "thanks",
+    "thank you very much", "thank you so much", "thank you for watching",
+    "thanks for watching", "subscribe", "please subscribe",
+    "see you next time", "see you in the next video", ".", "the",
+    "okay", "ok", "yeah", "yes", "no", "uh", "um", "hmm", "mm-hmm", "mm",
+    "oh", "ah", "huh", "so", "you know", "silence", "music",
 }
 
 

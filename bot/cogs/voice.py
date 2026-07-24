@@ -38,6 +38,8 @@ TRANSCRIPT_LINES = 300    # rolling transcript kept per channel
 CONTEXT_LINES = 40        # transcript lines the AI sees on wake
 WAKE_COOLDOWN = 8         # seconds between wake responses per channel
 MAX_CONCURRENT_STT = 4    # simultaneous transcription API calls
+REPEAT_SUPPRESS_S = 45    # identical short phrases from one user within this
+REPEAT_MAX_CHARS = 30     # window are noise-triggered hallucinations — drop
 
 VOICE_PROMPT = (
     "\nRight now you are LIVE in the voice channel \"{channel}\" — you've been "
@@ -81,6 +83,7 @@ class Voice(commands.Cog):
         # channel_id -> deque[{ts, name, text, bot?, flagged?, system?}]
         self.transcripts: dict[int, deque] = defaultdict(lambda: deque(maxlen=TRANSCRIPT_LINES))
         self.last_wake: dict[int, float] = {}
+        self.last_text: dict[int, tuple[str, float]] = {}  # user_id -> (text, ts)
         self.stt_sem = asyncio.Semaphore(MAX_CONCURRENT_STT)
         if not transcription.available():
             log.warning("TRANSCRIPTION_API_KEY not set — voice monitoring disabled")
@@ -136,6 +139,17 @@ class Voice(commands.Cog):
             text = await transcription.transcribe_pcm(pcm)
         if not text:
             return {}
+        # Repeated short phrases from the same user in quick succession are
+        # noise-gate hallucinations, not someone actually talking
+        normalized = " ".join(text.lower().split())
+        prev = self.last_text.get(user_id)
+        now = time.time()
+        if (prev and prev[0] == normalized and len(normalized) <= REPEAT_MAX_CHARS
+                and now - prev[1] < REPEAT_SUPPRESS_S):
+            self.last_text[user_id] = (normalized, now)
+            log.info("dropped repeated blip from %s: %r", name, text)
+            return {}
+        self.last_text[user_id] = (normalized, now)
         log.info("[%s] %s: %s", channel.name, name, text)
         flagged = await self._check_banned_words(guild, channel, name, text)
         self.transcripts[channel_id].append(
