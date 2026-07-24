@@ -240,6 +240,32 @@ class Voice(commands.Cog):
                 "enabled": transcription.available(),
                 "voice_enabled": bool(await db.get_setting(guild.id, "voice_enabled"))}
 
+    # -- push-to-speak (used by proactive contributions in voice channels) ----
+
+    async def speak_in_voice(self, guild: discord.Guild, channel_id: int, text: str) -> bool:
+        """Synthesize text and play it through the sidecar, but only if the
+        sidecar is actually connected to that channel. Returns success."""
+        try:
+            status = await self._sidecar("GET", "/status")
+        except (httpx.HTTPError, ValueError):
+            return False
+        conn = next((c for c in status.get("connections", [])
+                     if str(c.get("guild")) == str(guild.id)), None)
+        if not conn or str(conn.get("channel")) != str(channel_id):
+            return False
+        audio = await tts.synthesize(text)
+        if not audio:
+            return False
+        try:
+            await self._sidecar("POST", "/speak", {
+                "guild_id": str(guild.id),
+                "tts": base64.b64encode(audio).decode(),
+            })
+        except (httpx.HTTPError, ValueError) as exc:
+            log.warning("speak_in_voice failed: %s", exc)
+            return False
+        return True
+
     # -- owner commands (proxied to the sidecar's control API) ----------------
 
     async def _sidecar(self, method: str, path: str, payload: dict | None = None) -> dict:
