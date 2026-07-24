@@ -22,6 +22,20 @@
     </div>
   </div>
 
+  <!-- Cursor API key setup -->
+  <div id="cursor-setup-screen" class="hidden">
+    <div class="setup-shell">
+      <div id="cursor-setup-progress" class="setup-progress"></div>
+      <p id="cursor-setup-step-label" class="setup-step-label muted"></p>
+      <div id="cursor-setup-content"></div>
+      <div class="setup-nav">
+        <button type="button" class="btn ghost" id="cursor-setup-skip">Skip for now</button>
+        <button type="button" class="btn ghost hidden" id="cursor-setup-back">Back</button>
+        <button type="button" class="btn primary" id="cursor-setup-next">Continue</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Login -->
   <div id="login-screen" class="hidden">
     <div class="login-card">
@@ -61,7 +75,7 @@
 
   <div id="toast" class="hidden"></div>
 
-  <script src="/static/onboarding.js?v=6"></script>
-  <script src="/static/app.js?v=11"></script>
+  <script src="/static/onboarding.js?v=8"></script>
+  <script src="/static/app.js?v=13"></script>
 </body>
 </html>

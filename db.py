@@ -43,6 +43,18 @@ CREATE TABLE IF NOT EXISTS mod_logs (
 );
 CREATE INDEX IF NOT EXISTS idx_warnings_guild_user ON warnings (guild_id, user_id);
 CREATE INDEX IF NOT EXISTS idx_logs_guild ON mod_logs (guild_id, created_at);
+CREATE TABLE IF NOT EXISTS voice_transcripts (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    guild_id   INTEGER NOT NULL,
+    channel_id INTEGER NOT NULL,
+    ts         REAL NOT NULL,
+    name       TEXT NOT NULL DEFAULT '',
+    text       TEXT NOT NULL,
+    bot        INTEGER NOT NULL DEFAULT 0,
+    flagged    INTEGER NOT NULL DEFAULT 0,
+    system     INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_voice_tx_guild_channel ON voice_transcripts (guild_id, channel_id, ts);
 """
 
 DEFAULTS = {
@@ -218,3 +230,66 @@ async def get_logs(guild_id: int, limit: int = 100) -> list[dict]:
         (guild_id, limit),
     )
     return [dict(row) for row in await cur.fetchall()]
+
+
+# -- voice transcripts (persisted rolling log per channel) -------------------
+
+async def append_voice_transcript(guild_id: int, channel_id: int, entry: dict) -> None:
+    await _db.execute(
+        "INSERT INTO voice_transcripts "
+        "(guild_id, channel_id, ts, name, text, bot, flagged, system) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            guild_id,
+            channel_id,
+            entry["ts"],
+            entry.get("name", ""),
+            entry["text"],
+            int(bool(entry.get("bot"))),
+            int(bool(entry.get("flagged"))),
+            int(bool(entry.get("system"))),
+        ),
+    )
+    await _db.commit()
+
+
+async def get_voice_transcripts(
+    guild_id: int, channel_id: int, limit: int = 300,
+) -> list[dict]:
+    cur = await _db.execute(
+        "SELECT ts, name, text, bot, flagged, system FROM voice_transcripts "
+        "WHERE guild_id = ? AND channel_id = ? ORDER BY ts DESC LIMIT ?",
+        (guild_id, channel_id, limit),
+    )
+    rows = await cur.fetchall()
+    lines: list[dict] = []
+    for row in reversed(rows):
+        line = {"ts": row["ts"], "name": row["name"], "text": row["text"]}
+        if row["bot"]:
+            line["bot"] = True
+        if row["flagged"]:
+            line["flagged"] = True
+        if row["system"]:
+            line["system"] = True
+        lines.append(line)
+    return lines
+
+
+async def voice_transcript_channels(guild_id: int) -> list[int]:
+    cur = await _db.execute(
+        "SELECT DISTINCT channel_id FROM voice_transcripts WHERE guild_id = ?",
+        (guild_id,),
+    )
+    return [row["channel_id"] for row in await cur.fetchall()]
+
+
+async def trim_voice_transcripts(guild_id: int, channel_id: int, keep: int = 300) -> None:
+    await _db.execute(
+        "DELETE FROM voice_transcripts WHERE id IN ("
+        "SELECT id FROM voice_transcripts "
+        "WHERE guild_id = ? AND channel_id = ? "
+        "ORDER BY ts DESC LIMIT -1 OFFSET ?"
+        ")",
+        (guild_id, channel_id, keep),
+    )
+    await _db.commit()

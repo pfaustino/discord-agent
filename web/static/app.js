@@ -863,6 +863,7 @@ function settingsPanelCursor(settings, appCfg, cursorModels) {
       `<option value="${esc(m.id)}" ${currentModel === m.id ? "selected" : ""}>${esc(m.displayName || m.id)}</option>`),
   ].join("");
   const mode = settings.cursor_mode || "agent";
+  const branch = settings.cursor_default_branch || "main";
   return `
     <h2 class="settings-panel-title">Cursor cloud agents</h2>
     <p class="muted settings-panel-lead">Owner-only: Sara can launch Cursor cloud agents on GitHub repos from chat. Cloud-only for v1.</p>
@@ -885,7 +886,10 @@ function settingsPanelCursor(settings, appCfg, cursorModels) {
         <input id="s-cursor_default_repo" value="${esc(settings.cursor_default_repo || "")}"
           placeholder="https://github.com/org/repo"></label>
       <label class="field"><span class="lbl">Default branch</span>
-        <input id="s-cursor_default_branch" value="${esc(settings.cursor_default_branch || "main")}"></label>
+        <select id="s-cursor_default_branch">
+          <option value="${esc(branch)}" selected>${esc(branch)}</option>
+        </select>
+        <span class="muted" id="cursor-branch-hint">Loads from GitHub when repo URL is set.</span></label>
       <label class="field"><span class="lbl">Default model</span>
         <select id="s-cursor_default_model">${modelOptions}</select>
         <span class="muted">Or type a model ID: <input id="s-cursor_default_model_custom" value="${esc(currentModel && !models.some((m) => m.id === currentModel) ? currentModel : "")}" placeholder="optional override"></span></label>
@@ -1027,6 +1031,35 @@ function bindSettingsHandlers(section) {
     };
   }
   if (section === "cursor") {
+    const refreshCursorBranches = async () => {
+      const repo = $("#s-cursor_default_repo")?.value.trim();
+      const select = $("#s-cursor_default_branch");
+      const hint = $("#cursor-branch-hint");
+      if (!select) return;
+      if (!repo) {
+        if (hint) hint.textContent = "Enter a repo URL to load branches.";
+        return;
+      }
+      const current = select.value || "main";
+      select.innerHTML = `<option>Loading branches…</option>`;
+      select.disabled = true;
+      if (hint) hint.textContent = "Loading from GitHub…";
+      try {
+        const data = await api(`/github/branches?repo=${encodeURIComponent(repo)}`);
+        const branches = data.branches || [];
+        const selected = branches.includes(current) ? current : (data.default || branches[0] || "main");
+        select.innerHTML = branches.map((b) =>
+          `<option value="${esc(b)}" ${b === selected ? "selected" : ""}>${esc(b)}${b === data.default ? " (default)" : ""}</option>`
+        ).join("");
+        if (hint) hint.textContent = `${branches.length} branch(es) from GitHub`;
+      } catch (e) {
+        select.innerHTML = `<option value="${esc(current)}" selected>${esc(current)}</option>`;
+        if (hint) hint.textContent = `Could not load branches: ${e.message}`;
+      }
+      select.disabled = false;
+    };
+    $("#s-cursor_default_repo")?.addEventListener("change", refreshCursorBranches);
+    refreshCursorBranches();
     $("#save-cursor-api").onclick = async () => {
       const body = {};
       const key = $("#c-cursor_api_key").value;
@@ -1099,6 +1132,13 @@ async function renderSettings() {
     api(`/guilds/${state.guildId}/ai/memory`).catch(() => ({ channels: [], total_messages: 0 })),
     api("/cursor/models").catch(() => ({ models: [] })),
   ]);
+
+  const section = state.settingsSection;
+  if (section === "cursor" && typeof needsCursorSetup === "function" && needsCursorSetup(appCfg)) {
+    showCursorSetup(() => renderSettings());
+    return;
+  }
+
   const textChannels = channels.filter((c) => c.type === "text");
   const channelOptions = (selected) =>
     `<option value="">— none —</option>` + textChannels.map((c) =>
@@ -1107,7 +1147,6 @@ async function renderSettings() {
     `<option value="">— none —</option>` + roles.filter((r) => !r.managed).map((r) =>
       `<option value="${r.id}" ${String(selected) === r.id ? "selected" : ""}>${esc(r.name)}</option>`).join("");
 
-  const section = state.settingsSection;
   const panels = {
     app: () => settingsPanelApp(appCfg),
     voice: () => settingsPanelVoice(settings, appCfg),

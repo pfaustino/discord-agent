@@ -28,7 +28,8 @@ html, body {
 .error { color: var(--danger); font-size: 13px; margin-top: 8px; }
 
 /* Setup wizard */
-#setup-screen {
+#setup-screen,
+#cursor-setup-screen {
   min-height: 100vh;
   display: flex;
   align-items: flex-start;

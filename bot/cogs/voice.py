@@ -24,12 +24,14 @@ from discord import app_commands
 from discord.ext import commands
 
 import config
+import cursor_api
 import db
 import openrouter
 import tools
 import transcription
 import tts
-from bot.utils import log_action, owner_only
+from bot import agent_tools
+from bot.utils import is_owner, log_action, owner_only
 
 log = logging.getLogger("voice")
 
@@ -60,16 +62,39 @@ FISH_TAG_PROMPT = (
     "(chuckling) but the tabs-vs-spaces thing died in 2015.\""
 )
 
+OWNER_VOICE_CURSOR = (
+    "\nThe speaker is the bot owner. When they ask you to send work to Cursor — "
+    "push a feature, code something, tell Cursor to do a task — use "
+    "launch_cursor_agent with a clear prompt drawn from the conversation. "
+    "Use cursor_agent_status to check progress. Say what you launched and share "
+    "the agent link when you have it."
+)
+
 
 class Voice(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         # channel_id -> deque[{ts, name, text, bot?, flagged?, system?}]
         self.transcripts: dict[int, deque] = defaultdict(lambda: deque(maxlen=TRANSCRIPT_LINES))
+        self._channels_loaded: set[int] = set()
         self.last_wake: dict[int, float] = {}
         self.stt_sem = asyncio.Semaphore(MAX_CONCURRENT_STT)
         if not transcription.available():
             log.warning("TRANSCRIPTION_API_KEY not set — voice monitoring disabled")
+
+    async def _ensure_channel_loaded(self, guild_id: int, channel_id: int) -> deque:
+        if channel_id not in self._channels_loaded:
+            lines = await db.get_voice_transcripts(guild_id, channel_id, TRANSCRIPT_LINES)
+            if lines:
+                self.transcripts[channel_id] = deque(lines, maxlen=TRANSCRIPT_LINES)
+            self._channels_loaded.add(channel_id)
+        return self.transcripts[channel_id]
+
+    async def _append_line(self, guild_id: int, channel_id: int, entry: dict) -> None:
+        lines = await self._ensure_channel_loaded(guild_id, channel_id)
+        lines.append(entry)
+        await db.append_voice_transcript(guild_id, channel_id, entry)
+        await db.trim_voice_transcripts(guild_id, channel_id, TRANSCRIPT_LINES)
 
     async def _wake_words(self, guild_id: int) -> list[str]:
         words = await db.get_setting(guild_id, "voice_wake_words") or []
@@ -87,9 +112,12 @@ class Voice(commands.Cog):
     async def handle_event(self, guild_id: int, channel_id: int, event: str):
         if event == "left":
             # keep the transcript for dashboard review; just mark the boundary
-            if self.transcripts.get(channel_id):
-                self.transcripts[channel_id].append(
-                    {"ts": time.time(), "name": "", "text": "— left the channel —", "system": True})
+            lines = await self._ensure_channel_loaded(guild_id, channel_id)
+            if lines:
+                await self._append_line(
+                    guild_id, channel_id,
+                    {"ts": time.time(), "name": "", "text": "— left the channel —", "system": True},
+                )
             return
         if event != "joined":
             return
@@ -124,14 +152,16 @@ class Voice(commands.Cog):
             return {}
         log.info("[%s] %s: %s", channel.name, name, text)
         flagged = await self._check_banned_words(guild, channel, name, text)
-        self.transcripts[channel_id].append(
-            {"ts": time.time(), "name": name, "text": text, "flagged": flagged})
+        await self._append_line(
+            guild_id, channel_id,
+            {"ts": time.time(), "name": name, "text": text, "flagged": flagged},
+        )
 
         tts = None
         wake = await self._wake_words(guild_id)
         normalized = " ".join("".join(c if c.isalnum() else " " for c in text.lower()).split())
         if any(w in normalized for w in wake):
-            tts = await self._respond(channel, name)
+            tts = await self._respond(channel, name, user_id, text)
         return {"text": text, "tts": tts}
 
     async def _check_banned_words(self, guild, channel, speaker_name, text) -> bool:
@@ -148,7 +178,9 @@ class Voice(commands.Cog):
 
     # -- wake-word response ---------------------------------------------------
 
-    async def _respond(self, channel, speaker_name: str) -> str | None:
+    async def _respond(self, channel, speaker_name: str,
+                       speaker_id: int | None = None,
+                       trigger_text: str = "") -> str | None:
         """Reply in the channel's text chat; return TTS mp3 (base64) for playback."""
         now = time.monotonic()
         if now - self.last_wake.get(channel.id, 0) < WAKE_COOLDOWN:
@@ -156,22 +188,49 @@ class Voice(commands.Cog):
         self.last_wake[channel.id] = now
 
         guild = channel.guild
+        owner = speaker_id is not None and is_owner(speaker_id)
         ai_cog = self.bot.get_cog("AI")
         base_prompt = await ai_cog.build_system_prompt(guild) if ai_cog else ""
         system_prompt = base_prompt + VOICE_PROMPT.format(
             channel=channel.name, speaker=speaker_name
         )
+        if owner and await cursor_api.is_enabled(guild.id):
+            system_prompt += OWNER_VOICE_CURSOR
+        if ai_cog:
+            system_prompt += await ai_cog.memory_summary_prompt(guild.id, channel.id)
         if tts.fish_enabled():
             system_prompt += FISH_TAG_PROMPT
+        await self._ensure_channel_loaded(guild.id, channel.id)
         lines = [e for e in self.transcripts[channel.id] if not e.get("system")][-CONTEXT_LINES:]
         transcript = "\n".join(f"{e['name']}: {e['text']}" for e in lines)
         model = await db.get_setting(guild.id, "ai_model")
+
+        async def tool_handler(name: str, args: dict) -> str:
+            if name in agent_tools.CURSOR_TOOL_NAMES:
+                if not owner:
+                    return "Only the bot owner can use Cursor tools."
+                if name == "launch_cursor_agent":
+                    result = await cursor_api.launch_agent(guild.id, args)
+                else:
+                    result = await cursor_api.agent_status(guild.id, args)
+                log.info("Voice cursor tool %s -> %s", name, result[:200])
+                return result
+            return await tools.run_tool(name, args)
+
+        schemas = list(tools.TOOL_SCHEMAS)
+        if owner and await cursor_api.is_enabled(guild.id):
+            schemas += [
+                s for s in agent_tools.TOOL_SCHEMAS
+                if s["function"]["name"] in agent_tools.CURSOR_TOOL_NAMES
+            ]
+
         try:
             reply = await openrouter.chat(
                 [{"role": "system", "content": system_prompt},
                  {"role": "user", "content": f"[voice transcript of #{channel.name}]\n{transcript}"}],
                 model=model,
-                tools=tools.TOOL_SCHEMAS, tool_handler=tools.run_tool,
+                tools=schemas, tool_handler=tool_handler,
+                max_tool_rounds=8,
             )
         except openrouter.OpenRouterError as exc:
             log.warning("Wake response failed: %s", exc)
@@ -180,8 +239,16 @@ class Voice(commands.Cog):
             return None
         # The tagged reply goes to TTS; chat and the transcript get clean text
         display = tts.strip_voice_tags(reply) or reply
-        self.transcripts[channel.id].append(
-            {"ts": time.time(), "name": self.bot.user.display_name, "text": display, "bot": True})
+        await self._append_line(
+            guild.id, channel.id,
+            {"ts": time.time(), "name": self.bot.user.display_name, "text": display, "bot": True},
+        )
+        if ai_cog and trigger_text.strip():
+            await ai_cog.record_exchange(
+                guild.id, channel.id,
+                f"{speaker_name}: {trigger_text.strip()}",
+                display,
+            )
         try:
             for chunk in [display[i:i + 1990] for i in range(0, len(display), 1990)]:
                 await channel.send(chunk)
@@ -202,6 +269,8 @@ class Voice(commands.Cog):
                     listening = str(conn.get("channel"))
         except (httpx.HTTPError, ValueError):
             pass
+        for channel_id in await db.voice_transcript_channels(guild.id):
+            await self._ensure_channel_loaded(guild.id, channel_id)
         channels = []
         for channel_id, lines in self.transcripts.items():
             channel = guild.get_channel(channel_id)

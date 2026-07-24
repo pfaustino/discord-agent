@@ -175,6 +175,8 @@ async def update_app_config(body: UpdateAppConfigBody) -> dict:
         data["fish_voice_id"] = body.fish_voice_id.strip()
     if body.edge_tts_voice is not None:
         data["edge_tts_voice"] = body.edge_tts_voice.strip() or app_config.DEFAULTS["edge_tts_voice"]
+    if body.cursor_api_key.strip():
+        data["cursor_api_key"] = body.cursor_api_key.strip()
 
     if not data:
         raise HTTPException(status_code=400, detail="No changes provided")

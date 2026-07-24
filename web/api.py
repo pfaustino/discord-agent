@@ -139,7 +139,11 @@ async def set_presence(body: PresenceBody, request: Request):
 @protected.get("/app-config")
 async def get_app_config():
     import app_config
-    return await app_config.public_snapshot()
+    snapshot = await app_config.public_snapshot()
+    snapshot["env_locked"] = {
+        "cursor_api_key": app_config._env_value("cursor_api_key") is not None,
+    }
+    return snapshot
 
 
 @protected.put("/app-config")
@@ -152,10 +156,15 @@ async def put_app_config(body: UpdateAppConfigBody, request: Request):
     return snapshot
 
 
+class CursorTestBody(BaseModel):
+    cursor_api_key: str = ""
+
+
 @protected.post("/cursor/test")
-async def test_cursor_api():
+async def test_cursor_api(body: CursorTestBody):
     import cursor_api
-    return await cursor_api.test_connection()
+    key = body.cursor_api_key.strip() or None
+    return await cursor_api.test_connection(api_key=key)
 
 
 @protected.get("/cursor/models")
@@ -163,6 +172,15 @@ async def cursor_models():
     import cursor_api
     items = await cursor_api.list_models()
     return {"models": items}
+
+
+@protected.get("/github/branches")
+async def github_branches(repo: str):
+    import tools
+    result = await tools.github_branches(repo)
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result["error"])
+    return result
 
 
 @protected.get("/guilds")
@@ -236,7 +254,7 @@ async def ai_memory_status(guild_id: str, request: Request):
     cog = get_bot(request).get_cog("AI")
     if cog is None:
         raise HTTPException(status_code=503, detail="AI cog not loaded")
-    status = cog.memory_status(g.id)
+    status = await cog.memory_status(g.id)
     status["memory_size"] = await cog.memory_len(g.id)
     status["summary_slots"] = await cog.summary_slots(g.id)
     return status

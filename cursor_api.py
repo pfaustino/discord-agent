@@ -26,27 +26,34 @@ def is_configured() -> bool:
     return bool(config.CURSOR_API_KEY.strip())
 
 
+def _api_key(override: str | None = None) -> str:
+    if override is not None:
+        return override.strip()
+    return config.CURSOR_API_KEY.strip()
+
+
 async def is_enabled(guild_id: int) -> bool:
     if not is_configured():
         return False
     return bool(await db.get_setting(guild_id, "cursor_enabled"))
 
 
-def _auth() -> tuple[str, str]:
-    return config.CURSOR_API_KEY, ""
+def _auth(api_key: str | None = None) -> tuple[str, str]:
+    return _api_key(api_key), ""
 
 
-async def _request(method: str, path: str, **kwargs) -> httpx.Response:
+async def _request(method: str, path: str, *, api_key: str | None = None, **kwargs) -> httpx.Response:
     url = f"{API_BASE}{path}"
-    async with httpx.AsyncClient(timeout=TIMEOUT, auth=_auth()) as client:
+    async with httpx.AsyncClient(timeout=TIMEOUT, auth=_auth(api_key)) as client:
         return await client.request(method, url, **kwargs)
 
 
-async def test_connection() -> dict:
-    if not is_configured():
-        return {"ok": False, "error": "Cursor API key is not configured"}
+async def test_connection(api_key: str | None = None) -> dict:
+    key = _api_key(api_key)
+    if not key:
+        return {"ok": False, "error": "No API key provided — paste your key and try again."}
     try:
-        resp = await _request("GET", "/v1/models")
+        resp = await _request("GET", "/v1/models", api_key=api_key)
     except httpx.HTTPError as exc:
         return {"ok": False, "error": f"Could not reach Cursor API: {exc}"}
     if resp.status_code == 200:

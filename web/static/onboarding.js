@@ -638,3 +638,289 @@ async function checkSetupStatus() {
 }
 
 window.checkSetupStatus = checkSetupStatus;
+
+/* ---------- Cursor API key onboarding ---------- */
+
+let cursorSetupNavBound = false;
+
+const cursorSetupState = {
+  step: 0,
+  cursor_api_key: "",
+  tested: false,
+  envLocked: false,
+  onComplete: null,
+};
+
+const CURSOR_SETUP_STEPS = [
+  { id: "welcome", title: "Cursor cloud agents" },
+  { id: "create", title: "Create an API key" },
+  { id: "connect", title: "Connect" },
+];
+
+async function dashboardApi(path, opts = {}) {
+  const res = await fetch("/api" + path, {
+    headers: { "Content-Type": "application/json" },
+    credentials: "same-origin",
+    ...opts,
+    body: opts.body ? JSON.stringify(opts.body) : undefined,
+  });
+  if (!res.ok) {
+    let detail = "Request failed";
+    try { detail = (await res.json()).detail || detail; } catch {}
+    throw new Error(detail);
+  }
+  return res.json();
+}
+
+function bindCursorSetupNav() {
+  if (cursorSetupNavBound) return;
+  qs("#cursor-setup-back")?.addEventListener("click", cursorSetupNavBack);
+  qs("#cursor-setup-next")?.addEventListener("click", cursorSetupNavNext);
+  qs("#cursor-setup-skip")?.addEventListener("click", skipCursorSetup);
+  cursorSetupNavBound = true;
+}
+
+function showCursorSetup(onComplete) {
+  cursorSetupState.onComplete = onComplete || null;
+  cursorSetupState.step = 0;
+  cursorSetupState.cursor_api_key = "";
+  cursorSetupState.tested = false;
+  qs("#app")?.classList.add("hidden");
+  qs("#cursor-setup-screen")?.classList.remove("hidden");
+  bindCursorSetupNav();
+  renderCursorSetupStep();
+}
+
+function hideCursorSetup() {
+  qs("#cursor-setup-screen")?.classList.add("hidden");
+  qs("#app")?.classList.remove("hidden");
+}
+
+function skipCursorSetup() {
+  hideCursorSetup();
+  if (cursorSetupState.onComplete) cursorSetupState.onComplete({ skipped: true });
+}
+
+function cursorSetupProgress() {
+  return CURSOR_SETUP_STEPS.map((s, i) =>
+    `<div class="setup-dot ${i === cursorSetupState.step ? "active" : ""} ${i < cursorSetupState.step ? "done" : ""}"></div>`
+  ).join("");
+}
+
+function renderCursorSetupStep() {
+  const step = CURSOR_SETUP_STEPS[cursorSetupState.step];
+  qs("#cursor-setup-progress").innerHTML = cursorSetupProgress();
+  qs("#cursor-setup-step-label").textContent =
+    `Step ${cursorSetupState.step + 1} of ${CURSOR_SETUP_STEPS.length} — ${step.title}`;
+
+  const renderers = {
+    welcome: renderCursorWelcome,
+    create: renderCursorCreate,
+    connect: renderCursorConnect,
+  };
+  qs("#cursor-setup-content").innerHTML = renderers[step.id]();
+  bindCursorSetupHandlers(step.id);
+
+  const nextBtn = qs("#cursor-setup-next");
+  const skipBtn = qs("#cursor-setup-skip");
+  const backBtn = qs("#cursor-setup-back");
+  if (nextBtn) {
+    nextBtn.textContent = step.id === "connect" ? "Save & finish" : "Continue";
+  }
+  if (backBtn) {
+    backBtn.classList.toggle("hidden", cursorSetupState.step === 0);
+  }
+  if (skipBtn) {
+    skipBtn.classList.toggle("hidden", cursorSetupState.step > 0);
+  }
+}
+
+function renderCursorWelcome() {
+  return `
+    <div class="setup-hero">
+      <div class="setup-icon">⚡</div>
+      <h1>Connect Cursor</h1>
+      <p class="muted">Sara can dispatch <strong>Cursor cloud agents</strong> to work on your GitHub repos — owner-only, from Discord chat.</p>
+    </div>
+    <ul class="setup-checklist">
+      <li>You describe a coding task to Sara</li>
+      <li>She launches a cloud agent on your repo</li>
+      <li>Cursor codes, pushes a branch, and can open a PR</li>
+    </ul>
+    <div class="setup-note">You need a <strong>Cursor API key</strong> from your Cursor account. The next steps walk you through creating one — takes about a minute.</div>`;
+}
+
+function renderCursorCreate() {
+  return `
+    <div class="card">
+      <h2>Get your Cursor API key</h2>
+      <p class="muted">Follow these steps in the Cursor dashboard. The key is shown <strong>once</strong> — copy it immediately.</p>
+
+      <div class="setup-portal-cta">
+        <a class="btn primary" href="https://cursor.com/dashboard/api" target="_blank" rel="noopener">Open Cursor API Keys ↗</a>
+      </div>
+
+      <div class="setup-guide">
+        <div class="setup-guide-step">
+          <h3><span class="num">1</span> Sign in to Cursor</h3>
+          <p>Use the same account that has access to the repos you want Sara to work on.</p>
+        </div>
+        <div class="setup-guide-step">
+          <h3><span class="num">2</span> Create an API key</h3>
+          <p>On the API Keys page, click <strong>Create API Key</strong> (or similar). Give it a name like <code>discord-agent</code>.</p>
+        </div>
+        <div class="setup-guide-step">
+          <h3><span class="num">3</span> Copy the key</h3>
+          <p>Cursor shows the full key only once. Copy it before closing the dialog — you'll paste it on the next step.</p>
+        </div>
+        <div class="setup-guide-step">
+          <h3><span class="num">4</span> Repo access</h3>
+          <p>Cloud agents clone from GitHub. Make sure your Cursor account (or team) can access the repositories you'll configure in Settings → Cursor.</p>
+        </div>
+      </div>
+
+      <div class="setup-callout">Key format is usually <code>cursor_…</code> or similar. Store it somewhere safe — you can't view it again in Cursor.</div>
+    </div>`;
+}
+
+function renderCursorConnect() {
+  const locked = cursorSetupState.envLocked;
+  return `
+    <div class="card">
+      <h2>Paste your API key</h2>
+      ${locked ? `<div class="setup-env-badge">Set via CURSOR_API_KEY environment variable</div>` : ""}
+      <p class="muted">We'll test the connection before saving. The key is stored locally in your bot database (same as other API keys).</p>
+
+      <div class="setup-paste-zone">
+        <label class="field"><span class="lbl">Cursor API key</span>
+          <input type="password" id="cursor-setup-api-key"
+            placeholder="Paste key from cursor.com/dashboard/api"
+            value="${esc(cursorSetupState.cursor_api_key)}"
+            ${locked ? "disabled" : ""} autocomplete="off"></label>
+      </div>
+
+      <button type="button" class="btn" id="cursor-setup-test" ${locked ? "disabled" : ""}>Test connection</button>
+      <div id="cursor-setup-test-result" class="muted" style="margin-top:10px"></div>
+      <div id="cursor-setup-preview" class="setup-bot-preview hidden" style="margin-top:12px"></div>
+      <p id="cursor-setup-error" class="error hidden"></p>
+    </div>`;
+}
+
+function bindCursorSetupHandlers(stepId) {
+  if (stepId === "connect") {
+    qs("#cursor-setup-api-key")?.addEventListener("input", (e) => {
+      cursorSetupState.cursor_api_key = e.target.value;
+      cursorSetupState.tested = false;
+      qs("#cursor-setup-preview")?.classList.add("hidden");
+    });
+    qs("#cursor-setup-test")?.addEventListener("click", testCursorApiKey);
+  }
+}
+
+async function testCursorApiKey() {
+  const err = qs("#cursor-setup-error");
+  const resultEl = qs("#cursor-setup-test-result");
+  const preview = qs("#cursor-setup-preview");
+  err?.classList.add("hidden");
+  preview?.classList.add("hidden");
+  const input = qs("#cursor-setup-api-key");
+  cursorSetupState.cursor_api_key = input?.value.trim() || "";
+  if (!cursorSetupState.cursor_api_key) {
+    toast("Paste your Cursor API key first", true);
+    if (resultEl) resultEl.textContent = "";
+    return;
+  }
+  resultEl.textContent = "Testing…";
+  try {
+    const result = await dashboardApi("/cursor/test", {
+      method: "POST",
+      body: { cursor_api_key: cursorSetupState.cursor_api_key },
+    });
+    if (!result.ok) {
+      resultEl.textContent = result.error || "Connection failed";
+      cursorSetupState.tested = false;
+      return;
+    }
+    cursorSetupState.tested = true;
+    resultEl.textContent = `Connected — ${result.model_count ?? 0} model(s) available`;
+    preview.innerHTML = `<div><strong>API key works</strong><br><span class="muted">Click Save & finish to store it.</span></div>`;
+    preview.classList.remove("hidden");
+    toast("Cursor API key verified");
+  } catch (e) {
+    resultEl.textContent = e.message;
+    cursorSetupState.tested = false;
+  }
+}
+
+function collectCursorStepData() {
+  if (CURSOR_SETUP_STEPS[cursorSetupState.step].id === "connect") {
+    cursorSetupState.cursor_api_key = qs("#cursor-setup-api-key")?.value.trim() || "";
+  }
+}
+
+function validateCursorStep() {
+  const step = CURSOR_SETUP_STEPS[cursorSetupState.step].id;
+  if (step === "connect" && !cursorSetupState.envLocked) {
+    if (!cursorSetupState.cursor_api_key) {
+      toast("Paste your Cursor API key", true);
+      return false;
+    }
+    if (!cursorSetupState.tested) {
+      toast("Test your API key before saving", true);
+      return false;
+    }
+  }
+  return true;
+}
+
+async function finishCursorSetup() {
+  const err = qs("#cursor-setup-error");
+  err?.classList.add("hidden");
+  try {
+    if (!cursorSetupState.envLocked) {
+      await dashboardApi("/app-config", {
+        method: "PUT",
+        body: { cursor_api_key: cursorSetupState.cursor_api_key },
+      });
+    }
+    hideCursorSetup();
+    toast("Cursor API key saved");
+    if (cursorSetupState.onComplete) cursorSetupState.onComplete({ saved: true });
+  } catch (e) {
+    if (err) {
+      err.textContent = e.message;
+      err.classList.remove("hidden");
+    } else {
+      toast(e.message, true);
+    }
+  }
+}
+
+function cursorSetupNavBack() {
+  if (cursorSetupState.step > 0) {
+    collectCursorStepData();
+    cursorSetupState.step--;
+    renderCursorSetupStep();
+  }
+}
+
+function cursorSetupNavNext() {
+  collectCursorStepData();
+  if (!validateCursorStep()) return;
+  if (cursorSetupState.step < CURSOR_SETUP_STEPS.length - 1) {
+    cursorSetupState.step++;
+    renderCursorSetupStep();
+  } else {
+    finishCursorSetup();
+  }
+}
+
+function needsCursorSetup(appCfg) {
+  if (!appCfg) return false;
+  if (appCfg.cursor_api_key_set) return false;
+  if (appCfg.env_locked?.cursor_api_key) return false;
+  return true;
+}
+
+window.showCursorSetup = showCursorSetup;
+window.needsCursorSetup = needsCursorSetup;

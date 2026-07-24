@@ -119,6 +119,62 @@ def find_repo_refs(text: str) -> list[tuple[str, str]]:
     return refs
 
 
+def parse_repo_ref(ref: str) -> tuple[str, str] | None:
+    """Parse owner/name from a github.com URL or owner/repo string."""
+    ref = ref.strip()
+    match = GITHUB_URL_RE.search(ref)
+    if match:
+        owner, name = match.group(1), match.group(2)
+    elif ref.count("/") == 1:
+        owner, name = ref.split("/", 1)
+    else:
+        return None
+    name = name.removesuffix(".git")
+    if owner.lower() in NON_REPO_OWNERS:
+        return None
+    return owner, name
+
+
+def _github_headers() -> dict[str, str]:
+    headers = {"Accept": "application/vnd.github+json", "User-Agent": "discord-agent"}
+    if config.GITHUB_TOKEN:
+        headers["Authorization"] = f"Bearer {config.GITHUB_TOKEN}"
+    return headers
+
+
+async def github_branches(ref: str) -> dict:
+    """List branch names for a GitHub repository."""
+    parsed = parse_repo_ref(ref)
+    if not parsed:
+        return {"error": f"Can't parse repository: {ref!r}"}
+    owner, name = parsed
+    try:
+        async with httpx.AsyncClient(timeout=20, headers=_github_headers(), follow_redirects=True) as client:
+            repo_resp = await client.get(f"https://api.github.com/repos/{owner}/{name}")
+            if repo_resp.status_code == 404:
+                return {"error": f"Repository {owner}/{name} not found (or private without token)."}
+            if repo_resp.status_code == 403:
+                return {"error": "GitHub API rate limit hit — add a token in Settings → App & API keys."}
+            repo_resp.raise_for_status()
+            default_branch = repo_resp.json().get("default_branch") or "main"
+
+            branches_resp = await client.get(
+                f"https://api.github.com/repos/{owner}/{name}/branches",
+                params={"per_page": 100},
+            )
+            if branches_resp.status_code != 200:
+                return {"error": f"Could not list branches (HTTP {branches_resp.status_code})."}
+            branches = [b["name"] for b in branches_resp.json()]
+    except httpx.HTTPError as exc:
+        return {"error": f"GitHub request failed: {exc}"}
+
+    if default_branch in branches:
+        branches = [default_branch] + [b for b in branches if b != default_branch]
+    elif branches:
+        default_branch = branches[0]
+    return {"default": default_branch, "branches": branches}
+
+
 async def github_repo(ref: str) -> str:
     match = GITHUB_URL_RE.search(ref)
     if match:
