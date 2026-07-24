@@ -85,6 +85,8 @@ DEFAULTS = {
     "ai_channels": [],
     # voice monitoring (audio capture via the Node.js sidecar in listener/)
     "voice_enabled": True,
+    # proactive speech via the pressure engine (pressure/ + bot/cogs/proactive.py)
+    "pressure_enabled": True,
     "voice_wake_words": ["hey max", "hey andrew"],
     # global presence (guild_id 0)
     "presence_status": "online",

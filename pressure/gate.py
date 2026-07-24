@@ -27,6 +27,7 @@ class SpeakingGate:
         exchange_active: bool,
         energy: float,
         topic_state: str,
+        record: bool = True,
     ) -> Decision:
         c = self.config
         reasons: list[str] = []
@@ -94,5 +95,6 @@ class SpeakingGate:
             channel_id=proposal.channel_id,
             pressures={k: round(v, 4) for k, v in pressures.items()},
         )
-        self.store.add_decision(decision, self.config.max_decisions_kept)
+        if record:
+            self.store.add_decision(decision, self.config.max_decisions_kept)
         return decision

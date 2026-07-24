@@ -209,9 +209,33 @@ class PressureEngine:
             return 0.0
         return pressures.get(bucket, 0.0) * (topic_strength / total_strength)
 
+    def candidates(self, now: float) -> list[dict]:
+        """Live (bucket, topic) pairs ranked by how far past threshold their
+        topic-scoped pressure is; includes where the latest signal was seen."""
+        latest: dict[tuple[str, str], Signal] = {}
+        for s in self.store.signals("active"):
+            if s.strength(now) <= 0:
+                continue
+            bucket, _ = self.config.source_routing.get(s.source, (None, 0.0))
+            if bucket is None:
+                continue
+            key = (bucket, s.topic)
+            if key not in latest or s.ts > latest[key].ts:
+                latest[key] = s
+        out = []
+        for (bucket, topic), s in latest.items():
+            out.append({
+                "bucket": bucket, "topic": topic,
+                "channel_id": s.channel_id, "user_id": s.user_id,
+                "pressure": self.topic_pressure(bucket, topic, now),
+                "threshold": self.config.buckets[bucket].threshold,
+            })
+        out.sort(key=lambda d: d["pressure"] - d["threshold"], reverse=True)
+        return out
+
     # -- the gate ------------------------------------------------------------
 
-    def evaluate(self, proposal: Proposal, now: float) -> Decision:
+    def evaluate(self, proposal: Proposal, now: float, record: bool = True) -> Decision:
         with self._lock:
             topic_state = "active"
             live = [s for s in self.store.signals("active")
@@ -228,6 +252,7 @@ class PressureEngine:
                 exchange_active=self.exchange_active(now, proposal.channel_id),
                 energy=self.store.kv_get("energy") or 0.0,
                 topic_state=topic_state,
+                record=record,
             )
 
     # -- discharge -----------------------------------------------------------

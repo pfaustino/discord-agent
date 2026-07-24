@@ -141,6 +141,12 @@ class Voice(commands.Cog):
         self.transcripts[channel_id].append(
             {"ts": time.time(), "name": name, "text": text, "flagged": flagged})
         memory.record_turn(guild_id, name, text, "voice")
+        proactive = self.bot.get_cog("Proactive")
+        if proactive is not None:
+            try:
+                await proactive.feed_voice(guild, channel_id, user_id, name, text)
+            except Exception:
+                log.exception("Proactive feed failed")
 
         tts = None
         wake = await self._wake_words(guild_id)

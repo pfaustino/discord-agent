@@ -17,6 +17,7 @@ COGS = [
     "bot.cogs.ai",
     "bot.cogs.utility",
     "bot.cogs.voice",
+    "bot.cogs.proactive",
 ]
 
 ACTIVITY_TYPES = {
