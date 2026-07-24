@@ -285,6 +285,31 @@ async def memory_summaries_log(guild_id: str, request: Request):
     return await cog.memory_summaries_log(g.id)
 
 
+class ManualSummaryBody(BaseModel):
+    channel_id: str
+    text: str
+
+
+@protected.post("/guilds/{guild_id}/memory/summaries")
+async def commit_manual_summary(guild_id: str, body: ManualSummaryBody, request: Request):
+    g = get_guild(request, guild_id)
+    cog = get_bot(request).get_cog("AI")
+    if cog is None:
+        raise HTTPException(status_code=503, detail="AI cog not loaded")
+    try:
+        channel_id = int(body.channel_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid channel_id")
+    try:
+        summary = await cog.commit_manual_summary(g.id, channel_id, body.text)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    await log_action(
+        g, "memory_commit", DASHBOARD_ACTOR, f"channel {channel_id}", summary[:120],
+    )
+    return {"ok": True, "summary": summary}
+
+
 @protected.post("/guilds/{guild_id}/ai/reset-memory")
 async def reset_ai_memory(guild_id: str, request: Request):
     g = get_guild(request, guild_id)

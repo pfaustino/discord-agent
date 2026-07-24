@@ -528,6 +528,36 @@ function chatMemoryLine(msg) {
   return `<div class="${cls}"><span class="who">${esc(who)}:</span> ${esc(msg.text)}</div>`;
 }
 
+function formatChatMemoryText(lines) {
+  return (lines || []).map((m) => `${m.role}: ${m.text}`).join("\n");
+}
+
+function formatVoiceTranscriptText(lines) {
+  return (lines || []).filter((l) => !l.system).map((l) => `${l.name}: ${l.text}`).join("\n");
+}
+
+const commitMemoryBtnHtml =
+  `<div class="btn-row"><button type="button" class="btn primary full" id="commit-memory">commit to long-term memory</button></div>`;
+
+async function commitTranscriptionToMemory(channelId, text) {
+  const trimmed = (text || "").trim();
+  if (!trimmed) {
+    toast("Nothing to commit", true);
+    return;
+  }
+  const btn = $("#commit-memory");
+  if (btn) btn.disabled = true;
+  try {
+    await api(`/guilds/${state.guildId}/memory/summaries`, {
+      method: "POST",
+      body: { channel_id: channelId, text: trimmed },
+    });
+    toast("Committed to long-term memory");
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
 function summaryCard(entry) {
   const t = entry.ts
     ? new Date(entry.ts * 1000).toLocaleString([], { dateStyle: "short", timeStyle: "short" })
@@ -592,13 +622,20 @@ async function renderTranscriptionPane() {
         </label>
         <span id="voice-live" class="badge hidden"></span>
       </div>
-      <div id="voice-console" class="console"><div class="muted" style="padding:8px">Loading…</div></div>`;
+      <div id="voice-console" class="console"><div class="muted" style="padding:8px">Loading…</div></div>
+      ${commitMemoryBtnHtml}`;
     document.querySelectorAll("[data-tx-source]").forEach((btn) => {
       btn.onclick = () => { state.transcriptionSource = btn.dataset.txSource; renderTranscriptionPane(); };
     });
     $("#voice-channel")?.addEventListener("change", (e) => {
       state.voiceChannel = e.target.value;
       refreshVoiceTranscription(true).catch(() => {});
+    });
+    $("#commit-memory")?.addEventListener("click", () => {
+      commitTranscriptionToMemory(
+        state.voiceChannel,
+        formatVoiceTranscriptText(state.voiceTranscriptLines),
+      );
     });
     await refreshVoiceTranscription(true);
     state.memoryTimer = setInterval(() => refreshVoiceTranscription(false).catch(() => {}), 3000);
@@ -618,14 +655,22 @@ async function renderTranscriptionPane() {
   const options = channels.map((c) =>
     `<option value="${c.id}" ${c.id === state.chatMemoryChannel ? "selected" : ""}>#${esc(c.name)} (${c.lines.length})</option>`).join("");
   const chan = channels.find((c) => c.id === state.chatMemoryChannel);
+  state.chatMemoryLines = chan.lines;
   $("#transcription-body").innerHTML = `
     <div class="inline-form">
       <select id="chat-memory-channel">${options}</select>
     </div>
-    <div class="console">${chan.lines.map(chatMemoryLine).join("") || '<div class="muted" style="padding:8px">Empty</div>'}</div>`;
+    <div class="console">${chan.lines.map(chatMemoryLine).join("") || '<div class="muted" style="padding:8px">Empty</div>'}</div>
+    ${commitMemoryBtnHtml}`;
   $("#chat-memory-channel").addEventListener("change", (e) => {
     state.chatMemoryChannel = e.target.value;
     renderTranscriptionPane();
+  });
+  $("#commit-memory")?.addEventListener("click", () => {
+    commitTranscriptionToMemory(
+      state.chatMemoryChannel,
+      formatChatMemoryText(state.chatMemoryLines),
+    );
   });
 }
 
@@ -711,6 +756,7 @@ async function refreshVoiceTranscription(force) {
   select.value = state.voiceChannel;
 
   const chan = data.channels.find((c) => c.id === state.voiceChannel);
+  state.voiceTranscriptLines = chan?.lines || [];
   const html = chan.lines.map(consoleLine).join("");
   if (box._html !== html) {
     const follow = $("#voice-follow")?.checked;

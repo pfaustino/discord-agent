@@ -348,6 +348,42 @@ class AI(commands.Cog):
             channels.sort(key=lambda c: c["summaries"][-1]["ts"], reverse=True)
         return {"channels": channels}
 
+    async def commit_manual_summary(
+        self, guild_id: int, channel_id: int, text: str,
+    ) -> str:
+        """Summarize admin-provided conversation text and append to long-term memory."""
+        if not await self.long_term_memory_enabled(guild_id):
+            raise ValueError("Long-term memory is disabled")
+        text = text.strip()
+        if not text:
+            raise ValueError("No text to summarize")
+        slots = await self.summary_slots(guild_id)
+        if slots <= 0:
+            raise ValueError("Summary slots are set to 0")
+        model = await db.get_setting(guild_id, "ai_model")
+        try:
+            summary = await openrouter.chat(
+                [{"role": "system", "content": SUMMARY_PROMPT},
+                 {"role": "user", "content": text}],
+                model=model,
+                max_tokens=250,
+                temperature=0.3,
+            )
+        except openrouter.OpenRouterError as exc:
+            log.warning("Manual summary generation failed: %s", exc)
+            raise ValueError("Summary generation failed") from exc
+        summary = (summary or "").strip()
+        if not summary:
+            raise ValueError("Summary generation returned empty result")
+        entries = await self._channel_summary_list(guild_id, channel_id)
+        while len(entries) >= slots:
+            entries.pop(0)
+        entries.append({"summary": summary, "weight": 1.0, "ts": time.time()})
+        self._reweight_summaries(entries)
+        await self._persist_guild_summaries(guild_id)
+        log.info("Manual summary committed for channel %s", channel_id)
+        return summary
+
     async def build_system_prompt(self, guild: discord.Guild, owner: bool = False) -> str:
         """Persona from settings plus a self-awareness section: who the bot is,
         which server it manages, and its actual command list."""
