@@ -45,6 +45,56 @@ TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "repo_tree",
+            "description": (
+                "List your own source repository's files with sizes and purposes "
+                "(read-only; secrets, databases, and vendor dirs are excluded)."
+            ),
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "repo_search",
+            "description": "Regex-search your own source code. Returns file:line matches.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "pattern": {"type": "string", "description": "Regex to search for"},
+                    "glob": {"type": "string", "description": "Optional path filter, e.g. bot/cogs/*.py"},
+                },
+                "required": ["pattern"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "repo_read",
+            "description": "Read one of your own source files (optionally a line range).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Repo-relative path"},
+                    "start": {"type": "integer", "description": "First line (1-based)"},
+                    "end": {"type": "integer", "description": "Last line"},
+                },
+                "required": ["path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "repo_deps",
+            "description": "List your own dependency manifests (python + node) with versions.",
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "github_repo",
             "description": (
                 "Fetch details about a GitHub repository: description, stars, "
@@ -73,6 +123,19 @@ async def run_tool(name: str, arguments: dict) -> str:
             return await web_search(str(arguments.get("query", "")))
         if name == "github_repo":
             return await github_repo(str(arguments.get("repo", "")))
+        if name in ("repo_tree", "repo_search", "repo_read", "repo_deps"):
+            import introspect
+            if name == "repo_tree":
+                return introspect.repo_tree()
+            if name == "repo_search":
+                return introspect.repo_search(str(arguments.get("pattern", "")),
+                                              str(arguments.get("glob", "")))
+            if name == "repo_read":
+                return introspect.repo_read(
+                    str(arguments.get("path", "")),
+                    int(arguments.get("start", 1) or 1),
+                    int(arguments["end"]) if arguments.get("end") else None)
+            return introspect.repo_deps()
         return f"Unknown tool: {name}"
     except Exception as exc:
         log.warning("Tool %s failed: %s", name, exc)
