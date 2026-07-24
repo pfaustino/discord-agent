@@ -174,6 +174,7 @@ document.querySelectorAll("#tabbar button").forEach((btn) => {
 
 function render() {
   clearInterval(state.memoryTimer);
+  clearInterval(state.overviewTimer);
   const renderers = {
     overview: renderOverview,
     members: renderMembers,
@@ -187,6 +188,41 @@ function render() {
 }
 
 /* ---------- overview ---------- */
+
+function overviewListeningLabel(voice) {
+  if (!voice.enabled) return { badge: "badge", text: "unavailable", detail: "Set a transcription API key in Settings → App." };
+  if (voice.listening) {
+    const channel = voice.channels.find((c) => c.id === voice.listening);
+    const name = channel ? `#${channel.name}` : "voice channel";
+    return { badge: "badge ok", text: "listening", detail: `Monitoring ${name}.` };
+  }
+  if (voice.voice_enabled) {
+    return { badge: "badge", text: "idle", detail: "Monitoring enabled — waiting for someone in voice." };
+  }
+  return { badge: "badge", text: "off", detail: "Not monitoring voice channels." };
+}
+
+async function refreshOverviewListening() {
+  const badge = $("#overview-listening-badge");
+  const detail = $("#overview-listening-detail");
+  const toggle = $("#overview-listening-toggle");
+  if (!badge || !detail || !toggle) return;
+  try {
+    const voice = await api(`/guilds/${state.guildId}/transcripts`);
+    const status = overviewListeningLabel(voice);
+    badge.className = status.badge;
+    badge.textContent = status.text;
+    detail.textContent = status.detail;
+    const active = Boolean(voice.enabled && voice.listening);
+    toggle.disabled = !voice.enabled;
+    toggle.textContent = active ? "Stop listening" : "Start listening";
+    toggle.className = active ? "btn danger" : "btn primary";
+    toggle.dataset.listening = active ? "1" : "0";
+  } catch (e) {
+    detail.textContent = "Could not load voice status.";
+    toggle.disabled = true;
+  }
+}
 
 async function renderOverview() {
   const [g, me] = await Promise.all([api(`/guilds/${state.guildId}`), api("/me")]);
@@ -204,6 +240,15 @@ async function renderOverview() {
       <div class="stat"><div class="value">${g.roles}</div><div class="label">Roles</div></div>
       <div class="stat"><div class="value">${g.boost_level}</div><div class="label">Boost level</div></div>
     </div>
+    <div class="section-title">Voice listening</div>
+    <div class="card" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <div class="grow" style="min-width:180px">
+        <div style="font-weight:600">Microphone</div>
+        <div class="muted" id="overview-listening-detail">Loading…</div>
+      </div>
+      <span id="overview-listening-badge" class="badge">…</span>
+      <button type="button" id="overview-listening-toggle" class="btn primary" disabled>Start listening</button>
+    </div>
     <div class="section-title">Bot</div>
     <div class="card" style="display:flex;align-items:center;gap:12px">
       <img class="avatar" src="${me.avatar}" style="width:40px;height:40px;border-radius:50%">
@@ -211,6 +256,28 @@ async function renderOverview() {
       <div class="muted">${me.guild_count} server(s) · ${me.latency_ms}ms</div></div>
       <span class="badge ok">online</span>
     </div>`;
+
+  clearInterval(state.overviewTimer);
+  $("#overview-listening-toggle").onclick = async () => {
+    const btn = $("#overview-listening-toggle");
+    if (btn.disabled) return;
+    const listening = btn.dataset.listening !== "1";
+    btn.disabled = true;
+    try {
+      const result = await api(`/guilds/${state.guildId}/voice/listening`, {
+        method: "POST",
+        body: { listening },
+      });
+      toast(listening
+        ? `Listening in ${result.channel_name ? "#" + result.channel_name : "voice"}`
+        : "Stopped listening");
+      await refreshOverviewListening();
+    } catch (e) {
+      await refreshOverviewListening();
+    }
+  };
+  await refreshOverviewListening();
+  state.overviewTimer = setInterval(() => refreshOverviewListening().catch(() => {}), 3000);
 }
 
 /* ---------- members ---------- */
