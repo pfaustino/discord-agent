@@ -2,8 +2,10 @@
 import os
 
 from fastapi import FastAPI
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+
+from config import BUILD_ID  # stamped into asset URLs to defeat browser caching
 
 import discord
 
@@ -31,7 +33,9 @@ def create_app(bot) -> FastAPI:
 
     @app.get("/")
     async def index():
-        return FileResponse(os.path.join(STATIC_DIR, "index.html"))
+        with open(os.path.join(STATIC_DIR, "index.html")) as f:
+            html = f.read().replace("__BUILD__", BUILD_ID)
+        return HTMLResponse(html, headers={"Cache-Control": "no-cache"})
 
     @app.get("/health")
     async def health():
