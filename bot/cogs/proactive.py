@@ -22,6 +22,8 @@ from discord.ext import commands
 import config
 import db
 import openrouter
+import tts
+from bot.cogs import voice as voice_mod
 from bot.utils import owner_only
 from pressure import PressureEngine, Proposal, Signal, SqliteStore
 
@@ -215,6 +217,10 @@ class Proactive(commands.Cog):
             if s.topic == cand["topic"] and s.strength(now) > 0) or "(none)"
         ai_cog = self.bot.get_cog("AI")
         system = await ai_cog.build_system_prompt(guild) if ai_cog else ""
+        is_voice = isinstance(channel, discord.VoiceChannel)
+        if is_voice and tts.fish_enabled():
+            system += (voice_mod.FISH_S2_TAG_PROMPT if tts.is_s2()
+                       else voice_mod.FISH_TAG_PROMPT)
         prompt = DRAFT_PROMPT.format(
             channel=channel.name, topic=cand["topic"], bucket=cand["bucket"],
             evidence=evidence,
@@ -236,10 +242,11 @@ class Proactive(commands.Cog):
             log.info("proactive draft declined for %s/%s", cand["bucket"], cand["topic"])
             return
         message = str(data["message"]).strip()
+        display = tts.strip_voice_tags(message) or message
         proposal = Proposal(
             topic=cand["topic"], bucket=cand["bucket"],
             content_key=str(data.get("content_key") or f"{cand['topic']}-point")[:80],
-            summary=message[:200],
+            summary=display[:200],
             provides_new_info=True,
             question_count=message.count("?"),
             relevance=float(data.get("relevance", 0.0) or 0.0),
@@ -250,14 +257,29 @@ class Proactive(commands.Cog):
                      cand["bucket"], cand["topic"], "; ".join(decision.reasons))
             return
         try:
-            for chunk in [message[i:i + 1990] for i in range(0, len(message), 1990)]:
+            for chunk in [display[i:i + 1990] for i in range(0, len(display), 1990)]:
                 await channel.send(chunk)
         except discord.HTTPException as exc:
             log.warning("Proactive send failed: %s", exc)
             return
         engine.record_spoken(proposal, now)
         log.info("PROACTIVE (%s/%s in #%s): %s",
-                 cand["bucket"], cand["topic"], channel.name, message[:120])
+                 cand["bucket"], cand["topic"], channel.name, display[:120])
+
+        # If this went to a voice channel, say it out loud too (tagged
+        # version to TTS; the transcript console gets the clean text).
+        if is_voice:
+            voice_cog = self.bot.get_cog("Voice")
+            if voice_cog is not None:
+                try:
+                    spoke = await voice_cog.speak_in_voice(guild, channel.id, message)
+                    voice_cog.transcripts[channel.id].append(
+                        {"ts": now, "name": self.bot.user.display_name,
+                         "text": display, "bot": True})
+                    if not spoke:
+                        log.info("voice playback skipped (sidecar not in #%s)", channel.name)
+                except Exception:
+                    log.exception("Proactive voice playback failed")
 
     # -- owner visibility ----------------------------------------------------
 

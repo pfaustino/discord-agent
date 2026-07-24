@@ -301,6 +301,14 @@ const control = http.createServer((req, res) => {
         manualHold.delete(guild.id);
         leaveGuild(guild);
         reply(200, { ok: true });
+      } else if (req.method === 'POST' && req.url === '/speak') {
+        // Push-to-speak: the python bot sends TTS audio to play in the
+        // channel we're connected to (proactive contributions in voice).
+        if (!guild) { reply(404, { error: 'guild not found' }); return; }
+        if (!getVoiceConnection(guild.id)) { reply(409, { error: 'not in voice' }); return; }
+        if (!args.tts) { reply(400, { error: 'no audio' }); return; }
+        playTts(guild, Buffer.from(String(args.tts), 'base64'));
+        reply(200, { ok: true });
       } else {
         reply(404, { error: 'unknown route' });
       }
