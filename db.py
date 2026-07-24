@@ -89,6 +89,11 @@ DEFAULTS = {
     "pressure_enabled": True,
     # master mute ("podcast mode"): no voice, no replies, no interjections
     "quiet_mode": False,
+    # de-escalation gate (bot/cogs/deescalate.py + deescalation.py)
+    "deesc_enabled": True,
+    # server preference: gentle check-ins for sustained harsh language
+    # (separate track from safety triggers; can never escalate past check-in)
+    "deesc_harsh_language": False,
     "voice_wake_words": ["hey max", "hey andrew"],
     # global presence (guild_id 0)
     "presence_status": "online",

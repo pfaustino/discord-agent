@@ -164,6 +164,12 @@ class Voice(commands.Cog):
                 await proactive.feed_voice(guild, channel_id, user_id, name, text)
             except Exception:
                 log.exception("Proactive feed failed")
+        deesc = self.bot.get_cog("Deescalate")
+        if deesc is not None:
+            try:
+                await deesc.observe(guild, channel_id)
+            except Exception:
+                log.exception("De-escalation observe failed")
 
         tts = None
         wake = await self._wake_words(guild_id)

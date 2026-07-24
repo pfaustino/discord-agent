@@ -18,6 +18,7 @@ COGS = [
     "bot.cogs.utility",
     "bot.cogs.voice",
     "bot.cogs.proactive",
+    "bot.cogs.deescalate",
 ]
 
 ACTIVITY_TYPES = {
