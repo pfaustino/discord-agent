@@ -96,8 +96,9 @@ class Voice(commands.Cog):
 
     async def voice_config(self, guild_id: int) -> dict:
         enabled = bool(await db.get_setting(guild_id, "voice_enabled"))
+        quiet = bool(await db.get_setting(guild_id, "quiet_mode"))
         return {
-            "enabled": enabled and transcription.available(),
+            "enabled": enabled and not quiet and transcription.available(),
             "wake_words": await self._wake_words(guild_id),
         }
 
@@ -129,6 +130,8 @@ class Voice(commands.Cog):
         guild = self.bot.get_guild(guild_id)
         if guild is None:
             return {}
+        if await db.get_setting(guild_id, "quiet_mode"):
+            return {}  # muted — sidecar leaves on its next sweep; drop until then
         channel = guild.get_channel(channel_id)
         member = guild.get_member(user_id)
         if channel is None or (member and member.bot):
