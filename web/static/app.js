@@ -686,6 +686,18 @@ async function renderSettings() {
         <span class="muted">The bot always replies when @mentioned, in any channel.</span></label>
     </div>
 
+    <div class="section-title">Voice</div>
+    <div class="card">
+      <label class="field"><span class="lbl">Wake words (comma-separated)</span>
+        <input id="s-voice_wake_words" value="${esc((settings.voice_wake_words || []).join(", "))}"
+          placeholder="hey max, yo max"></label>
+      <label class="field"><span class="lbl">Cancel words (abort a pending reply)</span>
+        <input id="s-voice_cancel_words" value="${esc((settings.voice_cancel_words || []).join(", "))}"
+          placeholder="never mind, forget it, cancel that"></label>
+      <span class="muted">Say a wake word to pull the bot into the conversation;
+        a cancel word right after calls it off before he answers.</span>
+    </div>
+
     <div class="section-title">Logging</div>
     <div class="card">
       <label class="field"><span class="lbl">Mod log channel</span>
@@ -721,6 +733,10 @@ async function renderSettings() {
       ai_model: $("#s-ai_model").value.trim(),
       ai_system_prompt: $("#s-ai_system_prompt").value,
       ai_channels: [...$("#s-ai_channels").selectedOptions].map((o) => o.value),
+      voice_wake_words: $("#s-voice_wake_words").value.split(",")
+        .map((w) => w.trim().toLowerCase()).filter(Boolean),
+      voice_cancel_words: $("#s-voice_cancel_words").value.split(",")
+        .map((w) => w.trim().toLowerCase()).filter(Boolean),
       log_channel: $("#s-log_channel").value || null,
     };
     await api(`/guilds/${state.guildId}/settings`, { method: "PUT", body });

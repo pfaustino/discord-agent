@@ -84,6 +84,7 @@ class Voice(commands.Cog):
         self.transcripts: dict[int, deque] = defaultdict(lambda: deque(maxlen=TRANSCRIPT_LINES))
         self.last_wake: dict[int, float] = {}
         self.last_text: dict[int, tuple[str, float]] = {}  # user_id -> (text, ts)
+        self.pending_wake: dict[int, asyncio.Task] = {}    # channel_id -> reply task
         self.stt_sem = asyncio.Semaphore(MAX_CONCURRENT_STT)
         if not transcription.available():
             log.warning("TRANSCRIPTION_API_KEY not set — voice monitoring disabled")
@@ -91,6 +92,15 @@ class Voice(commands.Cog):
     async def _wake_words(self, guild_id: int) -> list[str]:
         words = await db.get_setting(guild_id, "voice_wake_words") or []
         return [w.lower() for w in words if w.strip()]
+
+    async def _cancel_words(self, guild_id: int) -> list[str]:
+        words = await db.get_setting(guild_id, "voice_cancel_words") or []
+        return [w.lower() for w in words if w.strip()]
+
+    @staticmethod
+    def _matches_any(text: str, words: list[str]) -> bool:
+        normalized = " ".join("".join(c if c.isalnum() else " " for c in text.lower()).split())
+        return any(w in normalized for w in words)
 
     # -- sidecar-facing API (called from web/internal.py) --------------------
 
@@ -171,12 +181,26 @@ class Voice(commands.Cog):
             except Exception:
                 log.exception("De-escalation observe failed")
 
-        tts = None
-        wake = await self._wake_words(guild_id)
-        normalized = " ".join("".join(c if c.isalnum() else " " for c in text.lower()).split())
-        if any(w in normalized for w in wake):
-            tts = await self._respond(channel, name)
-        return {"text": text, "tts": tts}
+        # Cancel words abort a pending wake response ("never mind, Max")
+        pending = self.pending_wake.get(channel_id)
+        if pending is not None and not pending.done() and \
+                self._matches_any(text, await self._cancel_words(guild_id)):
+            pending.cancel()
+            self.pending_wake.pop(channel_id, None)
+            self.transcripts[channel_id].append(
+                {"ts": time.time(), "name": "", "text": "— response cancelled —",
+                 "system": True})
+            log.info("[%s] wake response cancelled by %s: %r", channel.name, name, text)
+            return {"text": text}
+
+        if self._matches_any(text, await self._wake_words(guild_id)):
+            if pending is None or pending.done():
+                task = asyncio.create_task(self._respond_task(channel, name))
+                self.pending_wake[channel_id] = task
+                task.add_done_callback(
+                    lambda t, cid=channel_id: self.pending_wake.pop(cid, None)
+                    if self.pending_wake.get(cid) is t else None)
+        return {"text": text}
 
     async def _check_banned_words(self, guild, channel, speaker_name, text) -> bool:
         banned = await db.get_setting(guild.id, "banned_words") or []
@@ -192,8 +216,19 @@ class Voice(commands.Cog):
 
     # -- wake-word response ---------------------------------------------------
 
-    async def _respond(self, channel, speaker_name: str) -> str | None:
-        """Reply in the channel's text chat; return TTS mp3 (base64) for playback."""
+    async def _respond_task(self, channel, speaker_name: str):
+        """Cancellable wake response: brief grace window, then generate,
+        post, and speak via the push path. A cancel word aborts it anywhere
+        before the message goes out."""
+        try:
+            await asyncio.sleep(1.0)  # grace window for an instant "never mind"
+            await self._respond(channel, speaker_name)
+        except asyncio.CancelledError:
+            log.info("wake response task cancelled for #%s", channel.name)
+        except Exception:
+            log.exception("wake response failed")
+
+    async def _respond(self, channel, speaker_name: str) -> None:
         now = time.monotonic()
         if now - self.last_wake.get(channel.id, 0) < WAKE_COOLDOWN:
             return None
@@ -232,8 +267,7 @@ class Voice(commands.Cog):
                 await channel.send(chunk)
         except discord.HTTPException:
             pass
-        audio = await tts.synthesize(reply)
-        return base64.b64encode(audio).decode() if audio else None
+        await self.speak_in_voice(channel.guild, channel.id, reply)
 
     # -- dashboard data --------------------------------------------------------
 
