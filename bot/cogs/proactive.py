@@ -30,7 +30,8 @@ from pressure import PressureEngine, Proposal, Signal, SqliteStore
 log = logging.getLogger("proactive")
 
 TICK_EVERY = 30                 # seconds between engine ticks
-CLASSIFY_MIN_INTERVAL = 5.0     # per-channel classification rate cap
+CLASSIFY_MIN_INTERVAL = 20.0    # per-channel classification rate cap — messages
+                                # in between are batched into the next call
 CLASSIFY_MIN_CHARS = 12         # skip trivial messages
 CONTEXT_LINES = 12              # recent lines given to classifier/drafter
 VOICE_CONFIDENCE_SCALE = 0.85   # transcripts are noisier than typed text
@@ -47,7 +48,7 @@ CLASSIFY_PROMPT = (
     "signals — fabricated certainty is worse than silence. Use "
     "incorrect_claim only for clearly wrong technical claims.\n\n"
     "Recent messages:\n{context}\n\n"
-    "Newest message from {author}: {text}"
+    "Newest messages:\n{text}"
 )
 
 DRAFT_PROMPT = (
@@ -77,6 +78,7 @@ class Proactive(commands.Cog):
         self.bot = bot
         self.engines: dict[int, PressureEngine] = {}
         self.context: dict[int, deque] = defaultdict(lambda: deque(maxlen=CONTEXT_LINES))
+        self.pending: dict[int, list[str]] = defaultdict(list)  # lines awaiting classify
         self.last_classify: dict[int, float] = {}
         self.ticker: asyncio.Task | None = None
 
@@ -132,23 +134,30 @@ class Proactive(commands.Cog):
             return
         if await db.get_setting(guild.id, "quiet_mode"):
             return
-        if len(text) < CLASSIFY_MIN_CHARS:
+        if len(text) >= CLASSIFY_MIN_CHARS:
+            self.pending[channel_id].append(f"{author}: {text[:300]}")
+            del self.pending[channel_id][:-10]
+        if not self.pending[channel_id]:
             return
+        # Rate cap doubles as batching: everything since the last call goes
+        # into one classification instead of one call per message.
         if now - self.last_classify.get(channel_id, 0) < CLASSIFY_MIN_INTERVAL:
             return
         self.last_classify[channel_id] = now
+        batch = "\n".join(self.pending[channel_id])
+        self.pending[channel_id] = []
 
         engine = self.engine(guild.id)
         prompt = CLASSIFY_PROMPT.format(
             sources=", ".join(engine.config.source_routing),
             context="\n".join(list(self.context[channel_id])[:-1]) or "(none)",
-            author=author, text=text[:500],
+            text=batch,
         )
         try:
             reply = await openrouter.chat(
                 [{"role": "user", "content": prompt}],
-                model=await db.get_setting(guild.id, "ai_model"),
-                temperature=0.0, max_tokens=300,
+                model=await db.get_setting(guild.id, "ai_utility_model"),
+                temperature=0.0, max_tokens=300, background=True,
             )
         except openrouter.OpenRouterError as exc:
             log.warning("Signal classification failed: %s", exc)

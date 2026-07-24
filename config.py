@@ -5,6 +5,11 @@ DISCORD_TOKEN = os.environ.get("DISCORD_TOKEN", "")
 OWNER_ID = int(os.environ.get("OWNER_ID", "0") or "0")
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
 OPENROUTER_MODEL = os.environ.get("OPENROUTER_MODEL", "anthropic/claude-3.5-haiku")
+# Cheap model for background work (classification, memory, assessments) —
+# these are ~85% of call volume and don't need the conversational model
+OPENROUTER_UTILITY_MODEL = os.environ.get("OPENROUTER_UTILITY_MODEL", "anthropic/claude-3.5-haiku")
+# Hard hourly cap on background model calls (0 disables the cap)
+OPENROUTER_BG_HOURLY_CAP = int(os.environ.get("OPENROUTER_BG_HOURLY_CAP", "240"))
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
 # Voice transcription: any OpenAI-compatible /audio/transcriptions endpoint
 TRANSCRIPTION_API_KEY = os.environ.get("TRANSCRIPTION_API_KEY", "")

@@ -74,6 +74,9 @@ DEFAULTS = {
     # AI
     "ai_enabled": True,
     "ai_model": config.OPENROUTER_MODEL,
+    # cheap model for background work: signal classification, memory
+    # maintenance, de-escalation assessments
+    "ai_utility_model": config.OPENROUTER_UTILITY_MODEL,
     "ai_system_prompt": (
         "You're a chill, laid-back vibe coder — equal parts stoner philosopher and "
         "10x hacker. You keep it mellow: lowercase energy, dry humor, the occasional "
