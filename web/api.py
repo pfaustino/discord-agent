@@ -378,8 +378,27 @@ async def get_transcripts(guild_id: str, request: Request):
     g = get_guild(request, guild_id)
     cog = get_bot(request).get_cog("Voice")
     if cog is None:
-        return {"channels": [], "listening": None, "enabled": False}
+        return {"channels": [], "listening": None, "enabled": False, "voice_enabled": False}
     return await cog.dashboard_data(g)
+
+
+class VoiceListeningBody(BaseModel):
+    listening: bool
+
+
+@protected.post("/guilds/{guild_id}/voice/listening")
+async def set_voice_listening(guild_id: str, body: VoiceListeningBody, request: Request):
+    g = get_guild(request, guild_id)
+    cog = get_bot(request).get_cog("Voice")
+    if cog is None:
+        raise HTTPException(status_code=503, detail="Voice cog not loaded")
+    result = await cog.set_listening(g, listening=body.listening)
+    if not result.get("ok"):
+        raise HTTPException(status_code=400, detail=result.get("error", "Failed to update listening state"))
+    action = "voice_listen_start" if body.listening else "voice_listen_stop"
+    detail = result.get("channel_name") or "stopped"
+    await log_action(g, action, DASHBOARD_ACTOR, detail)
+    return result
 
 
 class ChannelCreateBody(BaseModel):

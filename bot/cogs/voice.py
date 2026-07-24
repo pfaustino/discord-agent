@@ -283,8 +283,45 @@ class Voice(commands.Cog):
                 "lines": list(lines),
             })
         channels.sort(key=lambda c: c["lines"][-1]["ts"], reverse=True)
-        return {"channels": channels, "listening": listening,
-                "enabled": transcription.available()}
+        return {
+            "channels": channels,
+            "listening": listening,
+            "enabled": transcription.available(),
+            "voice_enabled": bool(await db.get_setting(guild.id, "voice_enabled")),
+        }
+
+    def _busiest_voice_channel(self, guild: discord.Guild) -> discord.VoiceChannel | None:
+        occupied = [
+            c for c in guild.voice_channels
+            if sum(1 for m in c.members if not m.bot) > 0
+        ]
+        if not occupied:
+            return None
+        return max(occupied, key=lambda c: sum(1 for m in c.members if not m.bot))
+
+    async def set_listening(self, guild: discord.Guild, *, listening: bool) -> dict:
+        """Start or stop voice monitoring from the dashboard."""
+        if not transcription.available():
+            return {"ok": False, "error": "Voice monitoring isn't available (transcription API key not set)."}
+        if listening:
+            target = self._busiest_voice_channel(guild)
+            if target is None:
+                return {"ok": False, "error": "No occupied voice channels to join."}
+            await db.set_setting(guild.id, "voice_enabled", True)
+            try:
+                await self._sidecar("POST", "/join", {
+                    "guild_id": str(guild.id),
+                    "channel_id": str(target.id),
+                })
+            except (httpx.HTTPError, ValueError) as exc:
+                return {"ok": False, "error": f"Voice listener unreachable: {exc}"}
+            return {"ok": True, "listening": str(target.id), "channel_name": target.name}
+        await db.set_setting(guild.id, "voice_enabled", False)
+        try:
+            await self._sidecar("POST", "/leave", {"guild_id": str(guild.id)})
+        except (httpx.HTTPError, ValueError) as exc:
+            return {"ok": False, "error": f"Voice listener unreachable: {exc}"}
+        return {"ok": True, "listening": None}
 
     # -- owner commands (proxied to the sidecar's control API) ----------------
 
