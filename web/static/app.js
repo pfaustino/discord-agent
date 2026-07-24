@@ -202,6 +202,45 @@ function overviewListeningLabel(voice) {
   return { badge: "badge", text: "off", detail: "Not monitoring voice channels." };
 }
 
+async function setVoiceListening(listening) {
+  const result = await api(`/guilds/${state.guildId}/voice/listening`, {
+    method: "POST",
+    body: { listening },
+  });
+  toast(listening
+    ? `Listening in ${result.channel_name ? "#" + result.channel_name : "voice"}`
+    : "Stopped listening");
+  return result;
+}
+
+function updateVoiceListeningToggle(toggle, voice) {
+  if (!toggle || !voice) return;
+  const active = Boolean(voice.enabled && voice.listening);
+  toggle.disabled = !voice.enabled;
+  toggle.textContent = active ? "Stop listening" : "Start listening";
+  toggle.className = active ? "btn danger" : "btn primary";
+  toggle.dataset.listening = active ? "1" : "0";
+}
+
+function bindVoiceListeningToggle(toggle) {
+  if (!toggle || toggle._bound) return;
+  toggle._bound = true;
+  toggle.onclick = async () => {
+    if (toggle.disabled) return;
+    const listening = toggle.dataset.listening !== "1";
+    toggle.disabled = true;
+    try {
+      await setVoiceListening(listening);
+    } catch (e) {
+      toast(e.message || "Could not update listening state", true);
+    }
+    if (state.tab === "overview") await refreshOverviewListening();
+    if (state.tab === "memory" && state.memoryPane === "transcription" && state.transcriptionSource === "voice") {
+      await refreshVoiceTranscription(true);
+    }
+  };
+}
+
 async function refreshOverviewListening() {
   const badge = $("#overview-listening-badge");
   const detail = $("#overview-listening-detail");
@@ -213,11 +252,7 @@ async function refreshOverviewListening() {
     badge.className = status.badge;
     badge.textContent = status.text;
     detail.textContent = status.detail;
-    const active = Boolean(voice.enabled && voice.listening);
-    toggle.disabled = !voice.enabled;
-    toggle.textContent = active ? "Stop listening" : "Start listening";
-    toggle.className = active ? "btn danger" : "btn primary";
-    toggle.dataset.listening = active ? "1" : "0";
+    updateVoiceListeningToggle(toggle, voice);
   } catch (e) {
     detail.textContent = "Could not load voice status.";
     toggle.disabled = true;
@@ -258,24 +293,8 @@ async function renderOverview() {
     </div>`;
 
   clearInterval(state.overviewTimer);
-  $("#overview-listening-toggle").onclick = async () => {
-    const btn = $("#overview-listening-toggle");
-    if (btn.disabled) return;
-    const listening = btn.dataset.listening !== "1";
-    btn.disabled = true;
-    try {
-      const result = await api(`/guilds/${state.guildId}/voice/listening`, {
-        method: "POST",
-        body: { listening },
-      });
-      toast(listening
-        ? `Listening in ${result.channel_name ? "#" + result.channel_name : "voice"}`
-        : "Stopped listening");
-      await refreshOverviewListening();
-    } catch (e) {
-      await refreshOverviewListening();
-    }
-  };
+  const toggle = $("#overview-listening-toggle");
+  bindVoiceListeningToggle(toggle);
   await refreshOverviewListening();
   state.overviewTimer = setInterval(() => refreshOverviewListening().catch(() => {}), 3000);
 }
@@ -617,6 +636,7 @@ async function renderTranscriptionPane() {
       </div>
       <div class="inline-form">
         <select id="voice-channel"></select>
+        <button type="button" id="voice-listening-toggle" class="btn primary" disabled>Start listening</button>
         <label class="muted" style="display:flex;align-items:center;gap:6px;font-size:13px">
           <input type="checkbox" id="voice-follow" checked> follow
         </label>
@@ -637,6 +657,7 @@ async function renderTranscriptionPane() {
         formatVoiceTranscriptText(state.voiceTranscriptLines),
       );
     });
+    bindVoiceListeningToggle($("#voice-listening-toggle"));
     await refreshVoiceTranscription(true);
     state.memoryTimer = setInterval(() => refreshVoiceTranscription(false).catch(() => {}), 3000);
     return;
@@ -738,6 +759,7 @@ async function refreshVoiceTranscription(force) {
       live.className = "badge";
     }
   }
+  updateVoiceListeningToggle($("#voice-listening-toggle"), data);
 
   const select = $("#voice-channel");
   if (!select) return;
@@ -1027,8 +1049,11 @@ function settingsPanelCursor(settings, appCfg, cursorModels) {
           <option value="agent" ${mode === "agent" ? "selected" : ""}>Agent (code directly)</option>
           <option value="plan" ${mode === "plan" ? "selected" : ""}>Plan (plan first)</option>
         </select></label>
+      <label class="toggle"><input type="checkbox" id="s-cursor_work_on_current_branch"
+        ${settings.cursor_work_on_current_branch !== false ? "checked" : ""}> Push directly to target branch</label>
+      <span class="muted" style="display:block;margin:-4px 0 12px 28px">When on, commits go to the branch above (e.g. main) so your app sees changes immediately. When off, Cursor uses a separate cursor/… branch you must merge manually.</span>
       <label class="toggle"><input type="checkbox" id="s-cursor_auto_create_pr"
-        ${settings.cursor_auto_create_pr ? "checked" : ""}> Auto-create pull request when done</label>
+        ${settings.cursor_auto_create_pr ? "checked" : ""} ${settings.cursor_work_on_current_branch !== false ? "disabled" : ""}> Auto-create pull request when done</label>
       <p class="muted">@mention Sara as the bot owner to launch agents. Tools: <code>launch_cursor_agent</code>, <code>cursor_agent_status</code>.</p>
       <button class="btn primary full" id="save-cursor-settings">Save server settings</button>
     </div>`;
@@ -1230,6 +1255,15 @@ function bindSettingsHandlers(section) {
       select.disabled = false;
     };
     $("#s-cursor_default_repo")?.addEventListener("change", refreshCursorBranches);
+    const workOnBranch = $("#s-cursor_work_on_current_branch");
+    const autoPr = $("#s-cursor_auto_create_pr");
+    const syncCursorBranchMode = () => {
+      if (!autoPr || !workOnBranch) return;
+      autoPr.disabled = workOnBranch.checked;
+      if (workOnBranch.checked) autoPr.checked = false;
+    };
+    workOnBranch?.addEventListener("change", syncCursorBranchMode);
+    syncCursorBranchMode();
     refreshCursorBranches();
     $("#save-cursor-api").onclick = async () => {
       const body = {};
@@ -1263,6 +1297,7 @@ function bindSettingsHandlers(section) {
           cursor_default_branch: $("#s-cursor_default_branch").value.trim() || "main",
           cursor_default_model: customModel || selectModel || "",
           cursor_mode: $("#s-cursor_mode").value,
+          cursor_work_on_current_branch: $("#s-cursor_work_on_current_branch").checked,
           cursor_auto_create_pr: $("#s-cursor_auto_create_pr").checked,
         },
       });

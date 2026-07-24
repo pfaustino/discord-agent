@@ -116,6 +116,9 @@ async def _guild_defaults(guild_id: int) -> dict[str, Any]:
         "repo": await db.get_setting(guild_id, "cursor_default_repo") or "",
         "branch": await db.get_setting(guild_id, "cursor_default_branch") or "main",
         "auto_create_pr": bool(await db.get_setting(guild_id, "cursor_auto_create_pr")),
+        "work_on_current_branch": bool(
+            await db.get_setting(guild_id, "cursor_work_on_current_branch")
+        ),
         "mode": await db.get_setting(guild_id, "cursor_mode") or "agent",
     }
 
@@ -144,9 +147,20 @@ async def launch_agent(guild_id: int, arguments: dict) -> str:
     else:
         auto_pr = bool(auto_pr)
 
+    work_on_branch = arguments.get("work_on_current_branch")
+    if work_on_branch is None:
+        work_on_branch = defaults["work_on_current_branch"]
+    else:
+        work_on_branch = bool(work_on_branch)
+
+    # Pushing directly to the target branch — no separate cursor/... branch or PR needed.
+    if work_on_branch:
+        auto_pr = False
+
     body: dict[str, Any] = {
         "prompt": {"text": prompt},
         "repos": [{"url": repo, "startingRef": branch}],
+        "workOnCurrentBranch": work_on_branch,
         "autoCreatePR": auto_pr,
         "mode": mode,
     }
@@ -170,8 +184,15 @@ async def launch_agent(guild_id: int, arguments: dict) -> str:
 
     agent = data.get("agent") or {}
     run = data.get("run") or {}
+    push_note = (
+        f"Changes will push directly to **{branch}** (no separate cursor/ branch)."
+        if work_on_branch
+        else "Changes will land on a new cursor/… branch — merge or enable "
+             "'Push to target branch' in Settings → Cursor."
+    )
     lines = [
         "Cursor cloud agent launched.",
+        push_note,
         _format_run(run, agent),
         "",
         "The agent is working in the cloud — ask me to check status with cursor_agent_status.",

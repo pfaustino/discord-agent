@@ -483,7 +483,17 @@ TOOLS: dict[str, tuple[dict, callable]] = {
             "repo": _str("GitHub repo URL override (optional — uses server default)"),
             "branch": _str("Starting branch override (optional)"),
             "mode": _str("'agent' to code directly, 'plan' to plan first (optional)"),
-            "auto_create_pr": {"type": "boolean", "description": "Open a PR when done (optional)"},
+            "auto_create_pr": {
+                "type": "boolean",
+                "description": "Open a PR when done (only when not pushing to target branch)",
+            },
+            "work_on_current_branch": {
+                "type": "boolean",
+                "description": (
+                    "Push commits directly to the starting branch instead of a "
+                    "separate cursor/ branch (optional — server default applies)"
+                ),
+            },
         },
         ["prompt"],
     ), _launch_cursor_agent),

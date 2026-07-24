@@ -102,6 +102,7 @@ DEFAULTS = {
     "cursor_default_repo": "",
     "cursor_default_branch": "main",
     "cursor_auto_create_pr": False,
+    "cursor_work_on_current_branch": True,
     "cursor_mode": "agent",
     # external task management API (per-guild)
     "tasks_enabled": False,
