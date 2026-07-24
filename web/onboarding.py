@@ -49,6 +49,8 @@ class UpdateAppConfigBody(BaseModel):
     fish_voice_id: str | None = None
     edge_tts_voice: str | None = None
     cursor_api_key: str = ""
+    task_api_url: str | None = None
+    task_api_key: str = ""
 
 
 async def _require_setup_mode() -> None:
@@ -177,6 +179,10 @@ async def update_app_config(body: UpdateAppConfigBody) -> dict:
         data["edge_tts_voice"] = body.edge_tts_voice.strip() or app_config.DEFAULTS["edge_tts_voice"]
     if body.cursor_api_key.strip():
         data["cursor_api_key"] = body.cursor_api_key.strip()
+    if body.task_api_url is not None:
+        data["task_api_url"] = body.task_api_url.strip()
+    if body.task_api_key.strip():
+        data["task_api_key"] = body.task_api_key.strip()
 
     if not data:
         raise HTTPException(status_code=400, detail="No changes provided")

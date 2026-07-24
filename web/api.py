@@ -156,6 +156,12 @@ async def put_app_config(body: UpdateAppConfigBody, request: Request):
     return snapshot
 
 
+@protected.post("/tasks/test")
+async def test_task_api():
+    import task_api
+    return await task_api.test_connection()
+
+
 class CursorTestBody(BaseModel):
     cursor_api_key: str = ""
 

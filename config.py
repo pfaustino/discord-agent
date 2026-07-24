@@ -25,6 +25,8 @@ DASHBOARD_PASSWORD = ""
 SECRET_KEY = ""
 ONBOARDING_COMPLETE = False
 CURSOR_API_KEY = ""
+TASK_API_URL = ""
+TASK_API_KEY = ""
 
 
 async def reload() -> None:
@@ -33,7 +35,7 @@ async def reload() -> None:
     global GITHUB_TOKEN, TRANSCRIPTION_API_KEY, TRANSCRIPTION_API_URL, TRANSCRIPTION_MODEL
     global FISH_API_KEY, FISH_TTS_MODEL, FISH_VOICE_ID, EDGE_TTS_VOICE
     global DASHBOARD_PASSWORD, SECRET_KEY, ONBOARDING_COMPLETE
-    global CURSOR_API_KEY
+    global CURSOR_API_KEY, TASK_API_URL, TASK_API_KEY
 
     import app_config
 
@@ -54,3 +56,5 @@ async def reload() -> None:
     SECRET_KEY = data["secret_key"]
     ONBOARDING_COMPLETE = bool(data["onboarding_complete"])
     CURSOR_API_KEY = data["cursor_api_key"]
+    TASK_API_URL = data["task_api_url"]
+    TASK_API_KEY = data["task_api_key"]

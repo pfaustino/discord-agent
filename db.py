@@ -95,6 +95,9 @@ DEFAULTS = {
     "cursor_default_branch": "main",
     "cursor_auto_create_pr": False,
     "cursor_mode": "agent",
+    # external task management API (per-guild)
+    "tasks_enabled": False,
+    "tasks_default_project": None,
     # global presence (guild_id 0)
     "presence_status": "online",
     "presence_activity_type": "playing",

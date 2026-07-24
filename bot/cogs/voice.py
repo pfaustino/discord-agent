@@ -27,6 +27,7 @@ import config
 import cursor_api
 import db
 import openrouter
+import task_api
 import tools
 import transcription
 import tts
@@ -204,6 +205,7 @@ class Voice(commands.Cog):
         lines = [e for e in self.transcripts[channel.id] if not e.get("system")][-CONTEXT_LINES:]
         transcript = "\n".join(f"{e['name']}: {e['text']}" for e in lines)
         model = await db.get_setting(guild.id, "ai_model")
+        ctx = task_api.TaskContext.from_voice(guild, channel, speaker_name)
 
         async def tool_handler(name: str, args: dict) -> str:
             if name in agent_tools.CURSOR_TOOL_NAMES:
@@ -215,9 +217,12 @@ class Voice(commands.Cog):
                     result = await cursor_api.agent_status(guild.id, args)
                 log.info("Voice cursor tool %s -> %s", name, result[:200])
                 return result
+            if name in task_api.TOOL_NAMES:
+                return await task_api.run_tool(ctx, name, args)
             return await tools.run_tool(name, args)
 
         schemas = list(tools.TOOL_SCHEMAS)
+        schemas += await task_api.schemas_for_guild(guild.id)
         if owner and await cursor_api.is_enabled(guild.id):
             schemas += [
                 s for s in agent_tools.TOOL_SCHEMAS
