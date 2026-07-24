@@ -25,16 +25,19 @@ import openrouter
 
 log = logging.getLogger("memory")
 
-WORKING_EVERY = 5        # turns between working-memory refreshes
-CONSOLIDATE_EVERY = 45   # turns between working -> durable rollups
+WORKING_EVERY = 12       # turns between working-memory refreshes
+CONSOLIDATE_EVERY = 80   # turns between working -> durable rollups
+MIN_UPDATE_GAP_S = 120   # never refresh working memory more often than this
 TURN_BUFFER = 60         # raw turns kept per guild for the updater to read
-TURN_MAX_CHARS = 400     # per-turn cap fed to the updater
+TURNS_FED = 30           # most recent turns actually sent to the model
+TURN_MAX_CHARS = 300     # per-turn cap fed to the updater
 WORKING_MAX = 2500       # char caps requested from the model
 DURABLE_MAX = 5000
 
 _turns: dict[int, deque] = defaultdict(lambda: deque(maxlen=TURN_BUFFER))
 _counts: dict[int, int] = defaultdict(int)
 _since_rollup: dict[int, int] = defaultdict(int)
+_last_update: dict[int, float] = defaultdict(float)
 _locks: dict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
 
 WORKING_PROMPT = (
@@ -79,7 +82,10 @@ def record_turn(guild_id: int, speaker: str, text: str, source: str = "text") ->
         _since_rollup[guild_id] = 0
         _schedule(_consolidate(guild_id))
     elif _counts[guild_id] % WORKING_EVERY == 0:
-        _schedule(_update_working(guild_id))
+        # time gate on top of the turn counter: rapid voice chat shouldn't
+        # trigger a model call every few seconds
+        if time.time() - _last_update[guild_id] >= MIN_UPDATE_GAP_S:
+            _schedule(_update_working(guild_id))
 
 
 def _schedule(coro) -> None:
@@ -107,12 +113,13 @@ async def get_context(guild_id: int) -> str:
 
 
 async def _model(guild_id: int):
-    return await db.get_setting(guild_id, "ai_model")
+    return await db.get_setting(guild_id, "ai_utility_model")
 
 
 async def _update_working(guild_id: int) -> None:
     async with _locks[guild_id]:
-        turns = "\n".join(_turns[guild_id])
+        _last_update[guild_id] = time.time()
+        turns = "\n".join(list(_turns[guild_id])[-TURNS_FED:])
         if not turns:
             return
         working, _ = await db.get_memory(guild_id, "working")
@@ -122,6 +129,7 @@ async def _update_working(guild_id: int) -> None:
             updated = await openrouter.chat(
                 [{"role": "user", "content": prompt}],
                 model=await _model(guild_id), temperature=0.2, max_tokens=1200,
+                background=True,
             )
         except openrouter.OpenRouterError as exc:
             log.warning("Working-memory update failed: %s", exc)
@@ -148,6 +156,7 @@ async def _consolidate(guild_id: int) -> None:
             reply = await openrouter.chat(
                 [{"role": "user", "content": prompt}],
                 model=await _model(guild_id), temperature=0.2, max_tokens=2500,
+                background=True,
             )
         except openrouter.OpenRouterError as exc:
             log.warning("Memory consolidation failed: %s", exc)

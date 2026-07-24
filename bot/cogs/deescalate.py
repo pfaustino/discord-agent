@@ -160,8 +160,8 @@ class Deescalate(commands.Cog):
         try:
             reply = await openrouter.chat(
                 [{"role": "user", "content": ASSESS_PROMPT.format(transcript=transcript)}],
-                model=await db.get_setting(guild.id, "ai_model"),
-                temperature=0.0, max_tokens=250,
+                model=await db.get_setting(guild.id, "ai_utility_model"),
+                temperature=0.0, max_tokens=250, background=True,
             )
         except openrouter.OpenRouterError as exc:
             log.warning("assessment failed: %s", exc)
