@@ -198,7 +198,9 @@ class Voice(commands.Cog):
         if owner and await cursor_api.is_enabled(guild.id):
             system_prompt += OWNER_VOICE_CURSOR
         if ai_cog:
-            system_prompt += await ai_cog.memory_summary_prompt(guild.id, channel.id)
+            system_prompt += await ai_cog.memory_summary_prompt(
+                guild.id, channel.id, speaker_id,
+            )
         if tts.fish_enabled():
             system_prompt += FISH_TAG_PROMPT
         await self._ensure_channel_loaded(guild.id, channel.id)
@@ -253,6 +255,7 @@ class Voice(commands.Cog):
                 guild.id, channel.id,
                 f"{speaker_name}: {trigger_text.strip()}",
                 display,
+                user_id=speaker_id,
             )
         try:
             for chunk in [display[i:i + 1990] for i in range(0, len(display), 1990)]:

@@ -12,7 +12,7 @@ as a single service (bot + dashboard in one process).
 - Roles: `/giverole` `/takerole` `/createrole` `/deleterole`
 - Channels: `/createchannel` `/deletechannel` `/settopic`
 - Utility: `/ping` `/serverinfo` `/userinfo` `/say`
-- AI: `/ask`, `/aireset`, and the bot replies whenever it's @mentioned
+- AI: `/ask`, `/aireset`, `/memorytoggle`, and the bot replies whenever it's @mentioned
 - AI tools: DuckDuckGo web search, plus GitHub repo analysis (share a repo
   link and the bot pulls its stats, languages, and README to discuss it)
 - Voice monitoring (hybrid): a Node.js sidecar (`listener/`) joins occupied
@@ -100,6 +100,10 @@ Dashboard: http://localhost:8000
   resets on each deploy.
 - AI model, system prompt, and always-on AI channels are per-server settings in the
   dashboard. Any [OpenRouter model ID](https://openrouter.ai/models) works.
+- AI memory has two tiers: short-term context (recent turns in the current channel) and
+  long-term summaries (persisted across restarts when older turns roll off). Admins
+  configure memory size and summary slots in the dashboard; members can opt in or out
+  of long-term memory for their own conversations with `/memorytoggle`.
 - The dashboard is a single password for full control — use a strong one, and keep the
   Railway domain private.
 - Management commands (moderation, roles, channels, welcome, `/say`) only work for the
