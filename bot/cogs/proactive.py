@@ -159,8 +159,10 @@ class Proactive(commands.Cog):
         topic = str(data.get("topic") or "").strip().lower()[:60]
         if topic:
             engine.observe_message(now, str(channel_id), "", is_self=True, topic=topic)
+        sources_seen = []
         for item in data.get("signals") or []:
             source = str(item.get("source", ""))
+            sources_seen.append(source)
             try:
                 confidence = float(item.get("confidence", 0)) * confidence_scale
             except (TypeError, ValueError):
@@ -174,6 +176,16 @@ class Proactive(commands.Cog):
             if engine.ingest(signal, now):
                 log.info("pressure signal %s(%s) conf=%.2f — %s",
                          source, topic, confidence, signal.evidence)
+
+        # Safety signals nominate the de-escalation system; its own
+        # context-validated gate decides whether Max actually says anything.
+        if "safety_concern" in sources_seen:
+            deesc = self.bot.get_cog("Deescalate")
+            if deesc is not None:
+                try:
+                    await deesc.nominate(guild, channel_id)
+                except Exception:
+                    log.exception("de-escalation nomination failed")
 
     # -- tick & proactive speech ---------------------------------------------
 
