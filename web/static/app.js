@@ -192,7 +192,7 @@ async function renderOverview() {
     <div class="card" style="display:flex;align-items:center;gap:12px">
       <img class="avatar" src="${me.avatar}" style="width:40px;height:40px;border-radius:50%">
       <div class="grow"><div style="font-weight:600">${esc(me.name)}</div>
-      <div class="muted">${me.guild_count} server(s) · ${me.latency_ms}ms</div></div>
+      <div class="muted">${me.guild_count} server(s) · ${me.latency_ms}ms · build ${esc(me.build || "?")}</div></div>
       <span class="badge ok">online</span>
     </div>
     ${g.quiet_mode ? `

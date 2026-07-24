@@ -1,5 +1,10 @@
 """Environment-driven configuration."""
 import os
+import time
+
+# Process start stamp — used to cache-bust dashboard assets and shown as
+# the dashboard build id
+BUILD_ID = str(int(time.time()))
 
 DISCORD_TOKEN = os.environ.get("DISCORD_TOKEN", "")
 OWNER_ID = int(os.environ.get("OWNER_ID", "0") or "0")

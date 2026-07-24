@@ -12,6 +12,7 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
 
+import config
 import db
 import logbuffer
 from bot.utils import log_action
@@ -116,6 +117,7 @@ async def me(request: Request):
         "avatar": bot.user.display_avatar.url,
         "guild_count": len(bot.guilds),
         "latency_ms": round(bot.latency * 1000),
+        "build": config.BUILD_ID,
         "presence": {
             "status": await db.get_setting(0, "presence_status"),
             "activity_type": await db.get_setting(0, "presence_activity_type"),
