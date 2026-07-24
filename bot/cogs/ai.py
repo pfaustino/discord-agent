@@ -103,6 +103,9 @@ class AI(commands.Cog):
             slots = SUMMARY_SLOTS_DEFAULT
         return max(0, min(slots, SUMMARY_SLOTS_MAX))
 
+    async def long_term_memory_enabled(self, guild_id: int) -> bool:
+        return bool(await db.get_setting(guild_id, "ai_long_term_memory_enabled"))
+
     async def _ensure_summaries_loaded(self, guild_id: int) -> None:
         if guild_id in self._summaries_loaded:
             return
@@ -143,6 +146,8 @@ class AI(commands.Cog):
             entry["weight"] = round((i + 1) / n, 2)
 
     async def _summarize_batch(self, guild_id: int, channel_id: int, batch: list[dict]) -> None:
+        if not await self.long_term_memory_enabled(guild_id):
+            return
         slots = await self.summary_slots(guild_id)
         if slots <= 0 or not batch:
             return
@@ -177,6 +182,8 @@ class AI(commands.Cog):
             await self._summarize_batch(guild_id, channel_id, batch)
 
     async def _format_summaries(self, guild_id: int, channel_id: int) -> str:
+        if not await self.long_term_memory_enabled(guild_id):
+            return ""
         entries = await self._channel_summary_list(guild_id, channel_id)
         if not entries:
             return ""
@@ -185,6 +192,17 @@ class AI(commands.Cog):
             for e in entries
         ]
         return "\n".join(lines)
+
+    async def memory_summary_prompt(self, guild_id: int, channel_id: int) -> str:
+        """Long-term summary block for injection into a system prompt."""
+        block = await self._format_summaries(guild_id, channel_id)
+        if not block:
+            return ""
+        return (
+            "\n\n[Earlier in this channel — summarized from older turns. "
+            "Higher weight = more recent summary.]\n"
+            f"{block}"
+        )
 
     async def clear_channel_memory(self, guild_id: int, channel_id: int) -> None:
         self.history.pop(channel_id, None)
@@ -316,13 +334,7 @@ class AI(commands.Cog):
         channel_id = message.channel.id
         owner = is_owner(message.author.id)
         system_prompt = await self.build_system_prompt(message.guild, owner)
-        summary_block = await self._format_summaries(guild_id, channel_id)
-        if summary_block:
-            system_prompt += (
-                "\n\n[Earlier in this channel — summarized from older turns. "
-                "Higher weight = more recent summary.]\n"
-                f"{summary_block}"
-            )
+        system_prompt += await self.memory_summary_prompt(guild_id, channel_id)
         model = await db.get_setting(guild_id, "ai_model")
         channel_history = await self._channel_history(channel_id, guild_id)
 

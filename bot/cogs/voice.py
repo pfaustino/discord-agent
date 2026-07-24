@@ -161,6 +161,8 @@ class Voice(commands.Cog):
         system_prompt = base_prompt + VOICE_PROMPT.format(
             channel=channel.name, speaker=speaker_name
         )
+        if ai_cog:
+            system_prompt += await ai_cog.memory_summary_prompt(guild.id, channel.id)
         if tts.fish_enabled():
             system_prompt += FISH_TAG_PROMPT
         lines = [e for e in self.transcripts[channel.id] if not e.get("system")][-CONTEXT_LINES:]

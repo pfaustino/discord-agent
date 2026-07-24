@@ -71,6 +71,7 @@ DEFAULTS = {
     ),
     "ai_channels": [],
     "ai_memory_size": 20,
+    "ai_long_term_memory_enabled": True,
     "ai_summary_slots": 5,
     "ai_summary_memory": {},
     # voice monitoring (audio capture via the Node.js sidecar in listener/)

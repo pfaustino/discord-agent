@@ -565,7 +565,16 @@ async function renderTranscriptionPane() {
 async function renderLongTermPane() {
   const pane = $("#memory-pane");
   pane.innerHTML = `<div class="muted" style="padding:8px">Loading…</div>`;
-  const data = await api(`/guilds/${state.guildId}/memory/summaries`);
+  const [data, settings] = await Promise.all([
+    api(`/guilds/${state.guildId}/memory/summaries`),
+    api(`/guilds/${state.guildId}/settings`),
+  ]);
+  if (!settings.ai_long_term_memory_enabled) {
+    pane.innerHTML = `
+      <p class="muted" style="margin:8px 0 10px">Weighted summaries of older conversation, kept after recent memory rolls off.</p>
+      <div class="card muted">Long-term memory is turned off for this server. Enable it in Settings → AI chat.</div>`;
+    return;
+  }
   const channels = data.channels || [];
   if (!channels.length) {
     pane.innerHTML = `
@@ -813,23 +822,29 @@ function settingsPanelAutomod(settings) {
 
 function settingsPanelAI(settings, textChannels, memoryStatus) {
   const memChannels = memoryStatus?.channels || [];
+  const ltmEnabled = settings.ai_long_term_memory_enabled !== false;
   const memSummary = memChannels.length
-    ? `${memChannels.length} channel(s) · ${memoryStatus.total_messages} recent message(s) · ${memoryStatus.total_summaries || 0} summary chunk(s)`
-    : "No conversation memory stored right now";
+    ? `${memChannels.length} channel(s) · ${memoryStatus.total_messages} recent message(s) · ${memoryStatus.total_summaries || 0} summary chunk(s)${ltmEnabled ? "" : " · long-term off"}`
+    : ltmEnabled
+      ? "No conversation memory stored right now"
+      : "Long-term memory is off — only recent messages are kept";
   return `
     <h2 class="settings-panel-title">AI chat</h2>
     <p class="muted settings-panel-lead">OpenRouter model and behavior for @mentions and AI channels.</p>
     <div class="card">
       <label class="toggle"><input type="checkbox" id="s-ai_enabled"
         ${settings.ai_enabled ? "checked" : ""}> Enable AI replies</label>
+      <label class="toggle"><input type="checkbox" id="s-ai_long_term_memory_enabled"
+        ${ltmEnabled ? "checked" : ""}> Enable long-term memory</label>
+      <span class="muted" style="display:block;margin:-4px 0 12px 28px">Summarize older chat turns so the bot remembers beyond recent messages. Applies to AI chat and voice wake-word replies.</span>
       <label class="field"><span class="lbl">Model</span>
         <input id="s-ai_model" value="${esc(settings.ai_model)}" placeholder="openai/gpt-4o-mini"></label>
       <label class="field"><span class="lbl">Recent memory (messages per channel)</span>
         <input id="s-ai_memory_size" type="number" min="5" max="100" value="${settings.ai_memory_size || 20}">
-        <span class="muted">Full recent turns kept verbatim (5–100). Oldest turns are summarized when this fills up.</span></label>
-      <label class="field"><span class="lbl">Summary memory (chunks per channel)</span>
-        <input id="s-ai_summary_slots" type="number" min="0" max="20" value="${settings.ai_summary_slots ?? 5}">
-        <span class="muted">Weighted summaries of older conversation (0–20, 0 = off). Higher weight = more recent summary.</span></label>
+        <span class="muted">Full recent turns kept verbatim (5–100). Oldest turns are summarized when long-term memory is on, or dropped when it is off.</span></label>
+      <label class="field" id="s-ai_summary_slots-wrap"${ltmEnabled ? "" : ' style="opacity:.55"'}><span class="lbl">Summary memory (chunks per channel)</span>
+        <input id="s-ai_summary_slots" type="number" min="0" max="20" value="${settings.ai_summary_slots ?? 5}"${ltmEnabled ? "" : " disabled"}>
+        <span class="muted">Weighted summaries of older conversation (0–20). Higher weight = more recent summary.</span></label>
       <label class="field"><span class="lbl">System prompt</span>
         <textarea id="s-ai_system_prompt">${esc(settings.ai_system_prompt)}</textarea></label>
       <label class="field"><span class="lbl">Always-on AI channels</span>
@@ -956,11 +971,23 @@ function bindSettingsHandlers(section) {
     };
   }
   if (section === "ai") {
+    const ltmToggle = $("#s-ai_long_term_memory_enabled");
+    const slotsWrap = $("#s-ai_summary_slots-wrap");
+    const slotsInput = $("#s-ai_summary_slots");
+    const syncLongTermFields = () => {
+      const on = ltmToggle.checked;
+      slotsInput.disabled = !on;
+      slotsWrap.style.opacity = on ? "" : ".55";
+    };
+    ltmToggle.addEventListener("change", syncLongTermFields);
+    syncLongTermFields();
+
     $("#save-ai-settings").onclick = async () => {
       await api(`/guilds/${state.guildId}/settings`, {
         method: "PUT",
         body: {
           ai_enabled: $("#s-ai_enabled").checked,
+          ai_long_term_memory_enabled: ltmToggle.checked,
           ai_model: $("#s-ai_model").value.trim(),
           ai_memory_size: parseInt($("#s-ai_memory_size").value, 10) || 20,
           ai_summary_slots: parseInt($("#s-ai_summary_slots").value, 10),
