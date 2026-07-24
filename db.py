@@ -98,6 +98,9 @@ DEFAULTS = {
     # (separate track from safety triggers; can never escalate past check-in)
     "deesc_harsh_language": False,
     "voice_wake_words": ["hey max", "hey andrew"],
+    # saying one of these after a wake word aborts the pending response
+    "voice_cancel_words": ["never mind", "nevermind", "forget it",
+                           "forget about it", "cancel that", "scratch that"],
     # global presence (guild_id 0)
     "presence_status": "online",
     "presence_activity_type": "playing",
