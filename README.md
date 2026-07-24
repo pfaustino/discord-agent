@@ -15,6 +15,13 @@ as a single service (bot + dashboard in one process).
 - AI: `/ask`, `/aireset`, and the bot replies whenever it's @mentioned
 - AI tools: DuckDuckGo web search, plus GitHub repo analysis (share a repo
   link and the bot pulls its stats, languages, and README to discuss it)
+- Proactive speech: a pressure engine (`pressure/`, adapted from
+  digital-pressure) lets the bot speak unprompted — messages and voice
+  transcripts are classified into weighted signals (blockers, wrong claims,
+  promised follow-ups, safety concerns…); pressure charges, decays, and
+  flows, and a deterministic gate (thresholds, relevance, novelty,
+  cooldowns, budgets, energy) rules on every drafted contribution —
+  `/pressure` shows state or toggles it (owner)
 - Persistent two-tier memory: a working-memory file (current topic, open
   questions, recent meaningful turns; refreshed every 5 turns) rolls into a
   durable-memory file (dated facts/preferences/decisions with confidence)
