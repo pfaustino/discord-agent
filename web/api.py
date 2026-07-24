@@ -170,7 +170,26 @@ async def guild_overview(guild_id: str, request: Request):
         "roles": len(g.roles),
         "boost_level": g.premium_tier,
         "created_at": int(g.created_at.timestamp()),
+        "quiet_mode": bool(await db.get_setting(g.id, "quiet_mode")),
     }
+
+
+@protected.post("/guilds/{guild_id}/quiet")
+async def set_quiet(guild_id: str, request: Request):
+    """Master mute (podcast mode): body {"on": bool}. When muted, the bot
+    leaves voice immediately and stays silent everywhere until unmuted."""
+    g = get_guild(request, guild_id)
+    body = await request.json()
+    on = bool(body.get("on"))
+    await db.set_setting(g.id, "quiet_mode", on)
+    if on:
+        try:
+            await _voice_cog(request)._sidecar("POST", "/leave", {"guild_id": str(g.id)})
+        except (httpx.HTTPError, ValueError, HTTPException):
+            pass  # sidecar down or not in voice — the setting still mutes everything
+    await log_action(g, "quiet_mode", DASHBOARD_ACTOR, None,
+                     "muted (podcast mode)" if on else "unmuted")
+    return {"ok": True, "quiet_mode": on}
 
 
 # -- settings ---------------------------------------------------------------

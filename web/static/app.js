@@ -195,9 +195,24 @@ async function renderOverview() {
       <div class="muted">${me.guild_count} server(s) · ${me.latency_ms}ms</div></div>
       <span class="badge ok">online</span>
     </div>
+    ${g.quiet_mode ? `
+    <div class="card" style="margin-top:10px;border:1px solid var(--danger)">
+      <div style="font-weight:700">🔇 Muted (podcast mode)</div>
+      <div class="muted">Not in voice, not listening, not replying, not interjecting.</div>
+    </div>` : ""}
     <div class="btn-row" style="margin-top:10px">
+      <button class="btn ${g.quiet_mode ? "primary" : ""}" id="quiet-btn">
+        ${g.quiet_mode ? "🔊 Unmute Max" : "🔇 Mute Max (podcast mode)"}
+      </button>
       <button class="btn danger" id="restart-bot-btn">Restart bot</button>
     </div>`;
+  $("#quiet-btn").onclick = async () => {
+    const r = await api(`/guilds/${state.guildId}/quiet`, {
+      method: "POST", body: { on: !g.quiet_mode } });
+    toast(r.quiet_mode ? "Max is muted — he's out of voice and silent everywhere."
+                       : "Max is back.");
+    render();
+  };
   $("#restart-bot-btn").onclick = () =>
     confirmAction("Restart the whole bot? It'll be back in ~30 seconds.", async () => {
       await api("/bot/restart", { method: "POST" });

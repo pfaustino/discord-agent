@@ -150,6 +150,8 @@ class AI(commands.Cog):
             return
         if not await db.get_setting(message.guild.id, "ai_enabled"):
             return
+        if await db.get_setting(message.guild.id, "quiet_mode"):
+            return
         ai_channels = await db.get_setting(message.guild.id, "ai_channels") or []
         mentioned = self.bot.user in message.mentions
         in_ai_channel = str(message.channel.id) in [str(c) for c in ai_channels]

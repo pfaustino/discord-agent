@@ -6,6 +6,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+import db
 from bot.utils import owner_only
 
 
@@ -17,6 +18,23 @@ class Utility(commands.Cog):
     async def ping(self, interaction: discord.Interaction):
         await interaction.response.send_message(
             f"Pong! `{round(self.bot.latency * 1000)}ms`", ephemeral=True)
+
+    @app_commands.command(description="Master mute: no voice, no replies, no interjections")
+    @app_commands.describe(on="true = mute (podcast mode), false = unmute")
+    @owner_only()
+    async def quiet(self, interaction: discord.Interaction, on: bool):
+        await db.set_setting(interaction.guild.id, "quiet_mode", on)
+        if on:
+            voice_cog = self.bot.get_cog("Voice")
+            if voice_cog is not None:
+                try:
+                    await voice_cog._sidecar("POST", "/leave",
+                                             {"guild_id": str(interaction.guild.id)})
+                except Exception:
+                    pass
+        await interaction.response.send_message(
+            "🔇 Muted — I'm out of voice and staying quiet everywhere until you unmute."
+            if on else "🔊 Unmuted — back to normal.", ephemeral=True)
 
     @app_commands.command(description="Restart the bot (full process restart)")
     @owner_only()

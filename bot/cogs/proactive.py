@@ -130,6 +130,8 @@ class Proactive(commands.Cog):
                                    confidence_scale: float = 1.0):
         if not await db.get_setting(guild.id, "pressure_enabled"):
             return
+        if await db.get_setting(guild.id, "quiet_mode"):
+            return
         if len(text) < CLASSIFY_MIN_CHARS:
             return
         if now - self.last_classify.get(channel_id, 0) < CLASSIFY_MIN_INTERVAL:
@@ -185,7 +187,8 @@ class Proactive(commands.Cog):
                     if engine is None:
                         continue
                     engine.tick(now)
-                    if await db.get_setting(guild.id, "pressure_enabled"):
+                    if (await db.get_setting(guild.id, "pressure_enabled")
+                            and not await db.get_setting(guild.id, "quiet_mode")):
                         await self._maybe_speak(guild, engine, now)
             except asyncio.CancelledError:
                 return
