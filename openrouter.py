@@ -92,7 +92,16 @@ async def chat(
                 payload["tools"] = tools
             resp = await client.post(API_URL, headers=headers, json=payload)
             if resp.status_code != 200:
-                raise OpenRouterError(f"OpenRouter returned {resp.status_code}: {resp.text[:300]}")
+                text = resp.text[:300]
+                # Free-pool (and some budget) models don't support tool
+                # calling — degrade to a plain reply instead of failing.
+                if "tools" in payload and resp.status_code in (400, 404) \
+                        and "tool" in text.lower():
+                    log.warning("model rejected tool use — retrying without tools (%s)",
+                                text[:120])
+                    use_tools = False
+                    continue
+                raise OpenRouterError(f"OpenRouter returned {resp.status_code}: {text}")
             data = resp.json()
             try:
                 reply = data["choices"][0]["message"]
