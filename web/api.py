@@ -360,6 +360,23 @@ async def voice_stop(guild_id: str, request: Request):
     return {"ok": True}
 
 
+@protected.get("/guilds/{guild_id}/memory")
+async def get_memory(guild_id: str, request: Request):
+    g = get_guild(request, guild_id)
+    durable, dv = await db.get_memory(g.id, "durable")
+    working, wv = await db.get_memory(g.id, "working")
+    return {"durable": durable, "durable_version": dv,
+            "working": working, "working_version": wv}
+
+
+@protected.delete("/guilds/{guild_id}/memory")
+async def wipe_memory(guild_id: str, request: Request):
+    g = get_guild(request, guild_id)
+    await db.clear_memory(g.id)
+    await log_action(g, "memory_wipe", DASHBOARD_ACTOR, None, "memory wiped from dashboard")
+    return {"ok": True}
+
+
 @protected.get("/guilds/{guild_id}/transcripts")
 async def get_transcripts(guild_id: str, request: Request):
     g = get_guild(request, guild_id)

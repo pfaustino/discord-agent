@@ -676,8 +676,10 @@ async function renderSettings() {
     <div class="card">
       <label class="toggle"><input type="checkbox" id="s-ai_enabled"
         ${settings.ai_enabled ? "checked" : ""}> Enable AI replies</label>
-      <label class="field"><span class="lbl">Model</span>
-        <input id="s-ai_model" value="${esc(settings.ai_model)}" placeholder="anthropic/claude-3.5-haiku"></label>
+      <label class="field"><span class="lbl">Model (Max's voice — replies, wake, interjections)</span>
+        <input id="s-ai_model" value="${esc(settings.ai_model)}" placeholder="openrouter/free"></label>
+      <label class="field"><span class="lbl">Utility model (background: classification, memory, assessments)</span>
+        <input id="s-ai_utility_model" value="${esc(settings.ai_utility_model)}" placeholder="openrouter/free"></label>
       <label class="field"><span class="lbl">System prompt</span>
         <textarea id="s-ai_system_prompt">${esc(settings.ai_system_prompt)}</textarea></label>
       <label class="field"><span class="lbl">Always-on AI channels (replies to every message)</span>
@@ -696,6 +698,33 @@ async function renderSettings() {
           placeholder="never mind, forget it, cancel that"></label>
       <span class="muted">Say a wake word to pull the bot into the conversation;
         a cancel word right after calls it off before he answers.</span>
+    </div>
+
+    <div class="section-title">Proactive speech (pressure engine)</div>
+    <div class="card">
+      <label class="toggle"><input type="checkbox" id="s-pressure_enabled"
+        ${settings.pressure_enabled ? "checked" : ""}> Let the bot speak up unprompted
+        when pressure builds (blockers, wrong claims, safety)</label>
+    </div>
+
+    <div class="section-title">De-escalation</div>
+    <div class="card">
+      <label class="toggle"><input type="checkbox" id="s-deesc_enabled"
+        ${settings.deesc_enabled ? "checked" : ""}> Step in on real conflicts
+        (check-in &rarr; suggest a pause &rarr; notify mods; never punishes)</label>
+      <label class="toggle"><input type="checkbox" id="s-deesc_harsh_language"
+        ${settings.deesc_harsh_language ? "checked" : ""}> Also gently check in on
+        sustained harsh language (separate from safety; never escalates)</label>
+    </div>
+
+    <div class="section-title">Memory</div>
+    <div class="card">
+      <div class="btn-row">
+        <button class="btn" id="memory-view-btn">View memory</button>
+        <button class="btn danger" id="memory-wipe-btn">Wipe memory</button>
+      </div>
+      <span class="muted">Two-tier persistent memory (working + durable), built from
+        text and voice conversations.</span>
     </div>
 
     <div class="section-title">Logging</div>
@@ -719,6 +748,23 @@ async function renderSettings() {
       <button class="btn full" id="save-presence">Update presence</button>
     </div>`;
 
+  $("#memory-view-btn").onclick = async () => {
+    const m = await api(`/guilds/${state.guildId}/memory`);
+    openModal(`
+      <h2>Max's memory</h2>
+      <div class="section-title">Durable (v${m.durable_version})</div>
+      <pre style="white-space:pre-wrap;font-size:12.5px;max-height:30vh;overflow-y:auto">${esc(m.durable || "(empty)")}</pre>
+      <div class="section-title">Working (v${m.working_version})</div>
+      <pre style="white-space:pre-wrap;font-size:12.5px;max-height:30vh;overflow-y:auto">${esc(m.working || "(empty)")}</pre>
+      <div class="btn-row"><button class="btn" onclick="closeModal()">Close</button></div>`);
+  };
+  $("#memory-wipe-btn").onclick = () =>
+    confirmAction("Erase everything Max remembers about this server (working + durable)?",
+      async () => {
+        await api(`/guilds/${state.guildId}/memory`, { method: "DELETE" });
+        toast("Memory wiped");
+      });
+
   $("#save-settings").onclick = async () => {
     const body = {
       welcome_channel: $("#s-welcome_channel").value || null,
@@ -731,6 +777,10 @@ async function renderSettings() {
       max_mentions: parseInt($("#s-max_mentions").value, 10) || 0,
       ai_enabled: $("#s-ai_enabled").checked,
       ai_model: $("#s-ai_model").value.trim(),
+      ai_utility_model: $("#s-ai_utility_model").value.trim(),
+      pressure_enabled: $("#s-pressure_enabled").checked,
+      deesc_enabled: $("#s-deesc_enabled").checked,
+      deesc_harsh_language: $("#s-deesc_harsh_language").checked,
       ai_system_prompt: $("#s-ai_system_prompt").value,
       ai_channels: [...$("#s-ai_channels").selectedOptions].map((o) => o.value),
       voice_wake_words: $("#s-voice_wake_words").value.split(",")
