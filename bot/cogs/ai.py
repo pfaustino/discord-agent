@@ -114,6 +114,9 @@ class AI(commands.Cog):
             slots = SUMMARY_SLOTS_DEFAULT
         return max(0, min(slots, SUMMARY_SLOTS_MAX))
 
+    async def long_term_memory_enabled(self, guild_id: int) -> bool:
+        return bool(await db.get_setting(guild_id, "ai_long_term_memory_enabled"))
+
     async def _ensure_summaries_loaded(self, guild_id: int) -> None:
         if guild_id in self._summaries_loaded:
             return
@@ -154,6 +157,8 @@ class AI(commands.Cog):
             entry["weight"] = round((i + 1) / n, 2)
 
     async def _summarize_batch(self, guild_id: int, channel_id: int, batch: list[dict]) -> None:
+        if not await self.long_term_memory_enabled(guild_id):
+            return
         slots = await self.summary_slots(guild_id)
         if slots <= 0 or not batch:
             return
@@ -188,6 +193,8 @@ class AI(commands.Cog):
             await self._summarize_batch(guild_id, channel_id, batch)
 
     async def _format_summaries(self, guild_id: int, channel_id: int) -> str:
+        if not await self.long_term_memory_enabled(guild_id):
+            return ""
         entries = await self._channel_summary_list(guild_id, channel_id)
         if not entries:
             return ""

@@ -263,6 +263,7 @@ async def ai_memory_status(guild_id: str, request: Request):
     status = await cog.memory_status(g.id)
     status["memory_size"] = await cog.memory_len(g.id)
     status["summary_slots"] = await cog.summary_slots(g.id)
+    status["long_term_memory_enabled"] = await cog.long_term_memory_enabled(g.id)
     return status
 
 
