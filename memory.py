@@ -134,9 +134,14 @@ async def _update_working(guild_id: int) -> None:
         except openrouter.OpenRouterError as exc:
             log.warning("Working-memory update failed: %s", exc)
             return
-        if updated.strip():
-            await db.set_memory(guild_id, "working", updated.strip()[:WORKING_MAX + 500])
-            log.info("Working memory updated for guild %s", guild_id)
+        updated = updated.strip()
+        # Free-pool models occasionally return junk (e.g. a bare safety
+        # verdict) — never let that overwrite real memory
+        if len(updated) < 40 or "\n" not in updated and len(updated) < 80:
+            log.warning("Working-memory update rejected as junk: %r", updated[:80])
+            return
+        await db.set_memory(guild_id, "working", updated[:WORKING_MAX + 500])
+        log.info("Working memory updated for guild %s", guild_id)
 
 
 async def _consolidate(guild_id: int) -> None:

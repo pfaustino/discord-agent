@@ -24,6 +24,20 @@ class OpenRouterError(Exception):
     pass
 
 
+# One model in the free pool answers everything with a bare safety verdict
+# ("user safety safe") — detect it and re-roll the request so the free
+# router picks a different model.
+import re as _re
+_JUNK_VERDICT_RE = _re.compile(
+    r"^\W*(user\s*safety\W*)?(safe|unsafe)\W*$", _re.IGNORECASE)
+JUNK_RETRIES = 2
+
+
+def _is_junk_verdict(content: str) -> bool:
+    text = (content or "").strip()
+    return len(text) < 40 and bool(_JUNK_VERDICT_RE.match(text))
+
+
 def _bg_budget_check() -> None:
     cap = config.OPENROUTER_BG_HOURLY_CAP
     if cap <= 0:
@@ -64,9 +78,10 @@ async def chat(
     }
     messages = list(messages)
     use_tools = bool(tools and tool_handler)
+    junk_retries = 0
 
     async with httpx.AsyncClient(timeout=90) as client:
-        for round_no in range(max_tool_rounds + 1):
+        for round_no in range(max_tool_rounds + 1 + JUNK_RETRIES):
             payload = {
                 "model": model or config.OPENROUTER_MODEL,
                 "messages": messages,
@@ -90,7 +105,13 @@ async def chat(
 
             tool_calls = reply.get("tool_calls")
             if not (tool_calls and use_tools):
-                return reply.get("content") or ""
+                content = reply.get("content") or ""
+                if _is_junk_verdict(content) and junk_retries < JUNK_RETRIES:
+                    junk_retries += 1
+                    log.info("junk safety verdict from %s — re-rolling (%d/%d)",
+                             payload["model"], junk_retries, JUNK_RETRIES)
+                    continue
+                return content
 
             messages.append(reply)
             for call in tool_calls:
