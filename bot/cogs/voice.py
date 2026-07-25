@@ -167,7 +167,7 @@ class Voice(commands.Cog):
         flagged = await self._check_banned_words(guild, channel, name, text)
         self.transcripts[channel_id].append(
             {"ts": time.time(), "name": name, "text": text, "flagged": flagged})
-        memory.record_turn(guild_id, name, text, "voice")
+        memory.record_turn(guild_id, name, text, "voice", user_id=user_id)
         proactive = self.bot.get_cog("Proactive")
         if proactive is not None:
             try:
@@ -195,7 +195,7 @@ class Voice(commands.Cog):
 
         if self._matches_any(text, await self._wake_words(guild_id)):
             if pending is None or pending.done():
-                task = asyncio.create_task(self._respond_task(channel, name))
+                task = asyncio.create_task(self._respond_task(channel, name, user_id))
                 self.pending_wake[channel_id] = task
                 task.add_done_callback(
                     lambda t, cid=channel_id: self.pending_wake.pop(cid, None)
@@ -216,19 +216,19 @@ class Voice(commands.Cog):
 
     # -- wake-word response ---------------------------------------------------
 
-    async def _respond_task(self, channel, speaker_name: str):
+    async def _respond_task(self, channel, speaker_name: str, speaker_id: int):
         """Cancellable wake response: brief grace window, then generate,
         post, and speak via the push path. A cancel word aborts it anywhere
         before the message goes out."""
         try:
             await asyncio.sleep(1.0)  # grace window for an instant "never mind"
-            await self._respond(channel, speaker_name)
+            await self._respond(channel, speaker_name, speaker_id)
         except asyncio.CancelledError:
             log.info("wake response task cancelled for #%s", channel.name)
         except Exception:
             log.exception("wake response failed")
 
-    async def _respond(self, channel, speaker_name: str) -> None:
+    async def _respond(self, channel, speaker_name: str, speaker_id: int) -> None:
         now = time.monotonic()
         if now - self.last_wake.get(channel.id, 0) < WAKE_COOLDOWN:
             return None
@@ -236,7 +236,7 @@ class Voice(commands.Cog):
 
         guild = channel.guild
         ai_cog = self.bot.get_cog("AI")
-        base_prompt = await ai_cog.build_system_prompt(guild) if ai_cog else ""
+        base_prompt = await ai_cog.build_system_prompt(guild, speaker_id=speaker_id) if ai_cog else ""
         system_prompt = base_prompt + VOICE_PROMPT.format(
             channel=channel.name, speaker=speaker_name
         )
