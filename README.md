@@ -5,7 +5,9 @@ dashboard and AI chat powered by OpenRouter. Designed to deploy on Railway from 
 as a single service (bot + dashboard in one process).
 
 Docs: [overview](docs/overview.md) · [architecture](docs/architecture.md) ·
-[voice pipeline](docs/voice-pipeline.md) · [operations](docs/operations.md)
+[voice pipeline](docs/voice-pipeline.md) · [operations](docs/operations.md) ·
+[how Max thinks](docs/how-max-thinks.md) (concepts: pressure, memory,
+tools, wake pipeline, prompts, models, limitations, roadmap)
 
 ## Features
 
