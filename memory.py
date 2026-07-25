@@ -42,7 +42,7 @@ import openrouter
 log = logging.getLogger("memory")
 
 WORKING_EVERY = 12       # turns between working-memory refreshes
-CONSOLIDATE_EVERY = 80   # turns between working -> durable rollups
+CONSOLIDATE_EVERY = 25   # turns between working -> durable rollups
 MIN_UPDATE_GAP_S = 120   # never refresh working memory more often than this
 TURN_BUFFER = 60         # raw turns kept per guild for the updater to read
 TURNS_FED = 30           # most recent turns actually sent to the model
