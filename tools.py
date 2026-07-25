@@ -95,6 +95,100 @@ TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "github_branches",
+            "description": (
+                "List every branch on your own GitHub repo (not just the one "
+                "checked out locally) — use this to see what contributors have "
+                "pushed."
+            ),
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "github_pull_requests",
+            "description": "List pull requests on your own repo.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "state": {"type": "string", "enum": ["open", "closed", "all"],
+                              "description": "Default open"},
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "github_pull_request",
+            "description": (
+                "Full detail on one pull request: description, files changed, "
+                "and the diff — for actually reviewing a contributor's change."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {"number": {"type": "integer", "description": "PR number"}},
+                "required": ["number"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "github_compare",
+            "description": (
+                "Diff between any two branches/refs on your own repo — use this "
+                "to review a contributor's pushed branch even if they haven't "
+                "opened a pull request yet."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "base": {"type": "string", "description": "Base branch/ref, e.g. main"},
+                    "head": {"type": "string", "description": "Branch/ref to compare against base"},
+                },
+                "required": ["base", "head"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "github_commits",
+            "description": "Recent commits on a branch of your own repo.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "ref": {"type": "string", "description": "Branch/ref, default main"},
+                    "limit": {"type": "integer", "description": "Max commits, default 10"},
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "github_file",
+            "description": (
+                "Read a file from your own repo at any branch/commit ref — not "
+                "just the local checkout. Same secret exclusions as repo_read."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Repo-relative path"},
+                    "ref": {"type": "string", "description": "Branch/commit/tag, default main"},
+                },
+                "required": ["path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "github_repo",
             "description": (
                 "Fetch details about a GitHub repository: description, stars, "
@@ -136,6 +230,23 @@ async def run_tool(name: str, arguments: dict) -> str:
                     int(arguments.get("start", 1) or 1),
                     int(arguments["end"]) if arguments.get("end") else None)
             return introspect.repo_deps()
+        if name.startswith("github_") and name != "github_repo":
+            import github_api
+            if name == "github_branches":
+                return await github_api.list_branches()
+            if name == "github_pull_requests":
+                return await github_api.list_pull_requests(str(arguments.get("state", "open")))
+            if name == "github_pull_request":
+                return await github_api.get_pull_request(int(arguments.get("number", 0)))
+            if name == "github_compare":
+                return await github_api.compare_branches(
+                    str(arguments.get("base", "main")), str(arguments.get("head", "")))
+            if name == "github_commits":
+                return await github_api.list_commits(
+                    str(arguments.get("ref", "main")), int(arguments.get("limit", 10) or 10))
+            if name == "github_file":
+                return await github_api.read_file(
+                    str(arguments.get("path", "")), str(arguments.get("ref", "main")))
         return f"Unknown tool: {name}"
     except Exception as exc:
         log.warning("Tool %s failed: %s", name, exc)

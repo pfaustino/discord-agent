@@ -18,8 +18,13 @@ tools, wake pipeline, prompts, models, limitations, roadmap)
 - Channels: `/createchannel` `/deletechannel` `/settopic`
 - Utility: `/ping` `/serverinfo` `/userinfo` `/say`
 - AI: `/ask`, `/aireset`, and the bot replies whenever it's @mentioned
-- AI tools: DuckDuckGo web search, plus GitHub repo analysis (share a repo
-  link and the bot pulls its stats, languages, and README to discuss it)
+- AI tools: DuckDuckGo web search, GitHub repo analysis (share a repo link
+  and the bot pulls its stats, languages, and README to discuss it), and
+  full read-only visibility into the bot's own GitHub repo — every branch,
+  contributor pull requests with full diffs, branch comparisons, commits,
+  and file contents at any ref, for reviewing contributor work together
+  in chat. Merging is always a human decision — the bot has no write path
+  to GitHub at all.
 - Proactive speech: a pressure engine (`pressure/`, adapted from
   digital-pressure) lets the bot speak unprompted — messages and voice
   transcripts are classified into weighted signals (blockers, wrong claims,
