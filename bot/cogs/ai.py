@@ -8,6 +8,7 @@ bot owner talks to it, the AI additionally gets the management tools from
 bot.agent_tools and performs server actions directly (kick, ban, roles,
 channels, etc.).
 """
+import json
 import logging
 from collections import defaultdict, deque
 
@@ -86,15 +87,17 @@ class AI(commands.Cog):
         self.bot = bot
         self.history: dict[int, deque] = defaultdict(lambda: deque(maxlen=HISTORY_LEN))
 
-    async def build_system_prompt(self, guild: discord.Guild, owner: bool = False) -> str:
+    async def build_system_prompt(self, guild: discord.Guild, owner: bool = False,
+                                  speaker_id: int | None = None) -> str:
         """Persona from settings plus a self-awareness section: who the bot is,
-        which server it manages, and its actual command list."""
+        which server it manages, and its actual command list. speaker_id, when
+        given, loads that member's profile card first (see memory.get_context)."""
         persona = await db.get_setting(guild.id, "ai_system_prompt")
         command_lines = "\n".join(
             f"- /{cmd.name}: {cmd.description}"
             for cmd in sorted(self.bot.tree.get_commands(), key=lambda c: c.name)
         )
-        mem = await memory.get_context(guild.id)
+        mem = await memory.get_context(guild.id, user_id=speaker_id)
         return (
             f"{persona}\n\n"
             f"You are {self.bot.user.display_name}, the bot that manages the Discord "
@@ -122,12 +125,14 @@ class AI(commands.Cog):
     async def generate_reply(self, message: discord.Message) -> str:
         guild_id = message.guild.id
         owner = is_owner(message.author.id)
-        system_prompt = await self.build_system_prompt(message.guild, owner)
+        system_prompt = await self.build_system_prompt(
+            message.guild, owner, speaker_id=message.author.id)
         model = await db.get_setting(guild_id, "ai_model")
         channel_history = self.history[message.channel.id]
 
         content = message.content.replace(self.bot.user.mention, "").strip() or "(no text)"
-        memory.record_turn(guild_id, message.author.display_name, content, "text")
+        memory.record_turn(guild_id, message.author.display_name, content, "text",
+                           user_id=message.author.id)
 
         # Auto-attach repo details when the message contains GitHub links, so
         # the bot can analyze them (and follow-ups keep the context in history).
@@ -183,7 +188,8 @@ class AI(commands.Cog):
             await interaction.response.send_message("AI is disabled on this server.", ephemeral=True)
             return
         await interaction.response.defer()
-        system_prompt = await self.build_system_prompt(interaction.guild)
+        system_prompt = await self.build_system_prompt(
+            interaction.guild, speaker_id=interaction.user.id)
         model = await db.get_setting(interaction.guild.id, "ai_model")
         try:
             reply = await openrouter.chat(
@@ -196,7 +202,8 @@ class AI(commands.Cog):
             log.warning("OpenRouter error: %s", exc)
             await interaction.followup.send("AI is unavailable right now.")
             return
-        memory.record_turn(interaction.guild.id, interaction.user.display_name, question, "text")
+        memory.record_turn(interaction.guild.id, interaction.user.display_name, question, "text",
+                           user_id=interaction.user.id)
         memory.record_turn(interaction.guild.id, self.bot.user.display_name, reply, "text")
         await interaction.followup.send(reply[:1990])
 
@@ -206,12 +213,30 @@ class AI(commands.Cog):
         await interaction.response.send_message("AI memory cleared for this channel.", ephemeral=True)
 
     @app_commands.command(name="memory", description="Show or wipe the AI's persistent memory")
-    @app_commands.describe(wipe="Set true to erase both memory files")
+    @app_commands.describe(wipe="Set true to erase both memory files and all profile cards",
+                           member="Show this member's profile card instead of the guild dump")
     @owner_only()
-    async def memory_cmd(self, interaction: discord.Interaction, wipe: bool = False):
+    async def memory_cmd(self, interaction: discord.Interaction, wipe: bool = False,
+                         member: discord.Member | None = None):
         if wipe:
             await db.clear_memory(interaction.guild.id)
-            await interaction.response.send_message("Memory wiped (working + durable).", ephemeral=True)
+            await interaction.response.send_message(
+                "Memory wiped (working + durable + profile cards).", ephemeral=True)
+            return
+        if member is not None:
+            raw, v = await db.get_memory(interaction.guild.id, f"profile:{member.id}")
+            if not raw:
+                await interaction.response.send_message(
+                    f"No profile card for {member.display_name} yet.", ephemeral=True)
+                return
+            card = json.loads(raw)
+            lines = [f"**{card.get('name', member.display_name)}**'s profile (v{v})"]
+            for label, key in (("Goals", "goals"), ("Active projects", "active_projects"),
+                               ("Constraints", "constraints"), ("Vibe notes", "vibe_notes"),
+                               ("Last conversation", "last_conversation")):
+                if card.get(key):
+                    lines.append(f"**{label}:** {card[key]}")
+            await interaction.response.send_message("\n".join(lines)[:1990], ephemeral=True)
             return
         durable, dv = await db.get_memory(interaction.guild.id, "durable")
         working, wv = await db.get_memory(interaction.guild.id, "working")
