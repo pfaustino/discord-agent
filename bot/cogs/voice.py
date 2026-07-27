@@ -310,19 +310,23 @@ class Voice(commands.Cog):
         transcript = "\n".join(f"{e['name']}: {e['text']}" for e in lines)
         model = await db.get_setting(guild.id, "ai_model")
 
-        schemas = list(tools.TOOL_SCHEMAS)
-        handler = tools.run_tool
+        schemas = list(tools.TOOL_SCHEMAS) + [memory.RECALL_TOOL_SCHEMA]
+        fake_message = SimpleNamespace(
+            guild=guild, channel=channel,
+            author=guild.get_member(speaker_id) or discord.Object(id=speaker_id))
+
+        async def handler(name, args, _msg=fake_message):
+            if name == "recall_chat_log":
+                return await memory.recall(
+                    guild.id, member=args.get("member"), query=args.get("query"),
+                    limit=int(args.get("limit", 40) or 40))
+            if owner and name in agent_tools.TOOLS:
+                return await agent_tools.execute(self.bot, _msg, name, args)
+            return await tools.run_tool(name, args)
+
         on_tool_calls = None
         if owner:
             schemas += agent_tools.TOOL_SCHEMAS
-            fake_message = SimpleNamespace(
-                guild=guild, channel=channel,
-                author=guild.get_member(speaker_id) or discord.Object(id=speaker_id))
-
-            async def handler(name, args, _msg=fake_message):
-                if name in agent_tools.TOOLS:
-                    return await agent_tools.execute(self.bot, _msg, name, args)
-                return await tools.run_tool(name, args)
 
             async def on_tool_calls(tool_calls):
                 blurb = _describe_tool_calls(tool_calls)

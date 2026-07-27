@@ -91,9 +91,14 @@ class AI(commands.Cog):
         )
 
     def _tool_handler(self, message: discord.Message):
-        """Route tool calls: management tools to agent_tools, the rest to tools."""
+        """Route tool calls: chat-log recall to memory, management tools to
+        agent_tools, the rest to tools."""
         async def handler(name: str, args: dict) -> str:
-            if name in agent_tools.TOOLS:
+            if name == "recall_chat_log":
+                result = await memory.recall(
+                    message.guild.id, member=args.get("member"), query=args.get("query"),
+                    limit=int(args.get("limit", 40) or 40))
+            elif name in agent_tools.TOOLS:
                 result = await agent_tools.execute(self.bot, message, name, args)
             else:
                 result = await tools.run_tool(name, args)
@@ -125,7 +130,7 @@ class AI(commands.Cog):
 
         channel_history.append({"role": "user", "content": f"{message.author.display_name}: {content}"})
 
-        schemas = list(tools.TOOL_SCHEMAS)
+        schemas = list(tools.TOOL_SCHEMAS) + [memory.RECALL_TOOL_SCHEMA]
         if owner:
             schemas += agent_tools.TOOL_SCHEMAS
 
@@ -183,12 +188,20 @@ class AI(commands.Cog):
         system_prompt = await self.build_system_prompt(
             interaction.guild, speaker_id=interaction.user.id)
         model = await db.get_setting(interaction.guild.id, "ai_model")
+
+        async def handler(name: str, args: dict) -> str:
+            if name == "recall_chat_log":
+                return await memory.recall(
+                    interaction.guild.id, member=args.get("member"), query=args.get("query"),
+                    limit=int(args.get("limit", 40) or 40))
+            return await tools.run_tool(name, args)
+
         try:
             reply = await openrouter.chat(
                 [{"role": "system", "content": system_prompt},
                  {"role": "user", "content": question}],
                 model=model,
-                tools=tools.TOOL_SCHEMAS, tool_handler=tools.run_tool,
+                tools=tools.TOOL_SCHEMAS + [memory.RECALL_TOOL_SCHEMA], tool_handler=handler,
             )
         except openrouter.OpenRouterError as exc:
             log.warning("OpenRouter error: %s", exc)
@@ -227,7 +240,7 @@ class AI(commands.Cog):
             lines = [f"**{card.get('name', member.display_name)}**'s profile (v{v})"]
             for label, key in (("Goals", "goals"), ("Active projects", "active_projects"),
                                ("Constraints", "constraints"), ("Vibe notes", "vibe_notes"),
-                               ("Last conversation", "last_conversation")):
+                               ("Notes", "notes"), ("Last conversation", "last_conversation")):
                 if card.get(key):
                     lines.append(f"**{label}:** {card[key]}")
             await interaction.response.send_message("\n".join(lines)[:1990], ephemeral=True)
