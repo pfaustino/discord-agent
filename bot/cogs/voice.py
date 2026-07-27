@@ -14,6 +14,7 @@ the sidecar for playback in the voice channel.
 """
 import asyncio
 import base64
+import json
 import logging
 import time
 from collections import defaultdict, deque
@@ -42,6 +43,52 @@ WAKE_COOLDOWN = 8         # seconds between wake responses per channel
 MAX_CONCURRENT_STT = 4    # simultaneous transcription API calls
 REPEAT_SUPPRESS_S = 45    # identical short phrases from one user within this
 REPEAT_MAX_CHARS = 30     # window are noise-triggered hallucinations — drop
+MAX_TOOL_ROUNDS = 8       # model<->tool round trips per wake response, same as ai.py
+
+# Short, spoken-friendly blurbs for the "on it" announcement that plays before
+# a chained action actually runs, keyed by agent_tools tool name.
+_ACTION_BLURBS = {
+    "kick_member": lambda a: f"kicking {a.get('user')}",
+    "ban_member": lambda a: f"banning {a.get('user')}",
+    "unban_user": lambda a: f"unbanning user {a.get('user_id')}",
+    "timeout_member": lambda a: f"timing out {a.get('user')} for {a.get('minutes')} minutes",
+    "untimeout_member": lambda a: f"removing {a.get('user')}'s timeout",
+    "warn_member": lambda a: f"warning {a.get('user')}",
+    "clear_warnings": lambda a: f"clearing {a.get('user')}'s warnings",
+    "purge_messages": lambda a: f"deleting {a.get('amount')} messages"
+        + (f" in #{a['channel']}" if a.get("channel") else ""),
+    "set_slowmode": lambda a: f"setting slowmode to {a.get('seconds')}s"
+        + (f" in #{a['channel']}" if a.get("channel") else ""),
+    "lock_channel": lambda a: ("locking" if a.get("locked", True) else "unlocking")
+        + (f" #{a['channel']}" if a.get("channel") else " this channel"),
+    "create_channel": lambda a: f"creating a {a.get('kind', 'text')} channel called {a.get('name')}",
+    "delete_channel": lambda a: f"deleting #{a.get('channel')}",
+    "set_channel_topic": lambda a: "updating the topic"
+        + (f" for #{a['channel']}" if a.get("channel") else ""),
+    "send_message": lambda a: "posting that" + (f" in #{a['channel']}" if a.get("channel") else ""),
+    "give_role": lambda a: f"giving {a.get('user')} the {a.get('role')} role",
+    "take_role": lambda a: f"removing the {a.get('role')} role from {a.get('user')}",
+    "create_role": lambda a: f"creating the {a.get('name')} role",
+    "delete_role": lambda a: f"deleting the {a.get('role')} role",
+}
+
+
+def _describe_tool_calls(tool_calls: list[dict]) -> str:
+    """Turn raw OpenRouter tool_calls into one short, speakable "on it" line,
+    so the owner hears what's about to happen before it happens, not just
+    the after-the-fact result."""
+    parts = []
+    for call in tool_calls:
+        fn = call.get("function", {})
+        try:
+            args = json.loads(fn.get("arguments") or "{}")
+        except json.JSONDecodeError:
+            args = {}
+        blurb = _ACTION_BLURBS.get(fn.get("name", ""))
+        parts.append(blurb(args) if blurb else "handling that")
+    if not parts:
+        return "on it, one sec."
+    return "on it — " + ", then ".join(parts) + "."
 
 VOICE_PROMPT = (
     "\nRight now you are LIVE in the voice channel \"{channel}\" — you've been "
@@ -51,6 +98,17 @@ VOICE_PROMPT = (
     "positions people have taken, and the vibe. Weigh in directly and "
     "conversationally — this will be read (and maybe spoken) aloud in the "
     "channel, so keep it tight, no markdown, no walls of text."
+)
+
+VOICE_OWNER_ACTION_NOTE = (
+    "\nThis request came in as spoken, natural language, not a typed command — "
+    "there is no slash-command syntax to give you, so parse loose everyday "
+    "phrasing yourself and act on it directly with your tools. If what's asked "
+    "requires one or more tool calls, a short heads-up ('on it — doing X') is "
+    "spoken for you automatically the moment you request them, so you don't "
+    "need to announce that yourself. Your final reply is the completion "
+    "report, spoken after the action(s) finish — say what you did, plainly, "
+    "like you're telling the room it's done."
 )
 
 FISH_TAG_PROMPT = (
@@ -244,6 +302,8 @@ class Voice(commands.Cog):
         system_prompt = base_prompt + VOICE_PROMPT.format(
             channel=channel.name, speaker=speaker_name
         )
+        if owner:
+            system_prompt += VOICE_OWNER_ACTION_NOTE
         if tts.fish_enabled():
             system_prompt += FISH_S2_TAG_PROMPT if tts.is_s2() else FISH_TAG_PROMPT
         lines = [e for e in self.transcripts[channel.id] if not e.get("system")][-CONTEXT_LINES:]
@@ -252,6 +312,7 @@ class Voice(commands.Cog):
 
         schemas = list(tools.TOOL_SCHEMAS)
         handler = tools.run_tool
+        on_tool_calls = None
         if owner:
             schemas += agent_tools.TOOL_SCHEMAS
             fake_message = SimpleNamespace(
@@ -263,12 +324,24 @@ class Voice(commands.Cog):
                     return await agent_tools.execute(self.bot, _msg, name, args)
                 return await tools.run_tool(name, args)
 
+            async def on_tool_calls(tool_calls):
+                blurb = _describe_tool_calls(tool_calls)
+                self.transcripts[channel.id].append(
+                    {"ts": time.time(), "name": self.bot.user.display_name,
+                     "text": blurb, "bot": True})
+                try:
+                    await channel.send(blurb)
+                except discord.HTTPException:
+                    pass
+                await self.speak_in_voice(guild, channel.id, blurb)
+
         try:
             reply = await openrouter.chat(
                 [{"role": "system", "content": system_prompt},
                  {"role": "user", "content": f"[voice transcript of #{channel.name}]\n{transcript}"}],
                 model=model,
                 tools=schemas, tool_handler=handler,
+                max_tool_rounds=MAX_TOOL_ROUNDS, on_tool_calls=on_tool_calls,
             )
         except openrouter.OpenRouterError as exc:
             log.warning("Wake response failed: %s", exc)
