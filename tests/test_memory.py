@@ -17,7 +17,7 @@ class LiveConsolidationTest(unittest.IsolatedAsyncioTestCase):
         memory._turns.clear()
         memory._consolidating.clear()
         memory._pending.clear()
-        patcher = mock.patch.object(memory.db, "add_turn", mock.AsyncMock())
+        patcher = mock.patch.object(memory, "_persist_turn", mock.AsyncMock())
         patcher.start()
         self.addCleanup(patcher.stop)
 
@@ -100,7 +100,7 @@ class ChannelTaggingTest(unittest.TestCase):
 
     def test_record_turn_stores_channel_on_the_buffered_turn(self):
         memory._turns.clear()
-        with mock.patch.object(memory.db, "add_turn", mock.AsyncMock()):
+        with mock.patch.object(memory, "_persist_turn", mock.AsyncMock()):
             memory.record_turn(1, "alice", "posted the invoice", "text", channel="general")
         turn = memory._turns[1][-1]
         self.assertEqual(turn["channel"], "general")
@@ -243,10 +243,34 @@ class TurnDurabilityTest(unittest.IsolatedAsyncioTestCase):
             added.append((guild_id, seq, speaker, text))
 
         with mock.patch.object(memory.db, "add_turn", fake_add_turn), \
+             mock.patch.object(memory.db, "is_dictation_mode", mock.AsyncMock(return_value=False)), \
              mock.patch.object(memory, "_consolidate", mock.AsyncMock()):
             memory.record_turn(1, "travis", "a lot of detailed information")
             await asyncio.sleep(0)
         self.assertEqual(added, [(1, 1, "travis", "a lot of detailed information")])
+
+    async def test_record_turn_appends_manuscript_when_dictation_mode_is_on(self):
+        appended = []
+
+        async def fake_append(guild_id, user_id, text):
+            appended.append((guild_id, user_id, text))
+
+        with mock.patch.object(memory.db, "add_turn", mock.AsyncMock()), \
+             mock.patch.object(memory.db, "is_dictation_mode", mock.AsyncMock(return_value=True)), \
+             mock.patch.object(memory.db, "append_manuscript", fake_append), \
+             mock.patch.object(memory, "_consolidate", mock.AsyncMock()):
+            memory.record_turn(1, "travis", "chapter one begins here", user_id=42)
+            await asyncio.sleep(0)
+        self.assertEqual(appended, [(1, 42, "chapter one begins here")])
+
+    async def test_record_turn_does_not_append_manuscript_when_off(self):
+        with mock.patch.object(memory.db, "add_turn", mock.AsyncMock()), \
+             mock.patch.object(memory.db, "is_dictation_mode", mock.AsyncMock(return_value=False)), \
+             mock.patch.object(memory.db, "append_manuscript", mock.AsyncMock()) as fake_append, \
+             mock.patch.object(memory, "_consolidate", mock.AsyncMock()):
+            memory.record_turn(1, "travis", "just chatting", user_id=42)
+            await asyncio.sleep(0)
+        fake_append.assert_not_awaited()
 
     async def test_restore_replays_persisted_turns_and_retriggers_consolidation(self):
         persisted = [
