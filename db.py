@@ -53,6 +53,14 @@ CREATE TABLE IF NOT EXISTS memory_versions (
     content    TEXT NOT NULL,
     created_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS knowledge_base (
+    guild_id   INTEGER NOT NULL,
+    slug       TEXT NOT NULL,
+    title      TEXT NOT NULL,
+    content    TEXT NOT NULL,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (guild_id, slug)
+);
 CREATE TABLE IF NOT EXISTS manuscripts (
     guild_id   INTEGER NOT NULL,
     user_id    INTEGER NOT NULL,
@@ -170,7 +178,18 @@ DEFAULTS = {
         "record (life story, book draft) completely separate from durable "
         "memory and profile cards, never summarized or compressed. "
         "/manuscript (owner-only) reads it back or clears it. This is the "
-        "owner's own thing specifically, not a per-member feature."
+        "owner's own thing specifically, not a per-member feature.\n\n"
+        "You also have a knowledge base — kb_search, kb_list, kb_save — for "
+        "procedures, not facts: reusable \"how to do X\" steps, separate from "
+        "everything above. Before improvising an unfamiliar multi-step task, "
+        "or before asking how to do something, kb_search it first — if "
+        "there's a matching entry, just follow it, don't re-litigate it or "
+        "ask again. If there's no entry and you're genuinely unsure how to "
+        "proceed, ask a clarifying question rather than guessing. Once it's "
+        "resolved — whether you figured it out yourself or someone walked "
+        "you through it — kb_save the procedure so nobody has to explain it "
+        "again next time. This is how you stop needing to be told every "
+        "individual step of something you've already done before."
     ),
     "ai_channels": [],
     # voice monitoring (audio capture via the Node.js sidecar in listener/)
@@ -358,6 +377,61 @@ async def get_chat_log(guild_id: int, speaker_query: str | None = None,
     params.append(limit)
     cur = await _db.execute(sql, params)
     return [dict(row) for row in await cur.fetchall()]
+
+
+# -- knowledge base -----------------------------------------------------------
+#
+# Procedural memory: "how to do X" — as opposed to durable/working memory and
+# profile cards, which are facts *about* people. Guild-wide, not per-member.
+# Nothing here is written by consolidation; entries are only ever added or
+# updated explicitly, via the kb_save tool (knowledge.py), after Max either
+# already knew the procedure or a human just walked him through it in chat.
+
+async def kb_get(guild_id: int, slug: str) -> dict | None:
+    cur = await _db.execute(
+        "SELECT slug, title, content, updated_at FROM knowledge_base "
+        "WHERE guild_id = ? AND slug = ?", (guild_id, slug),
+    )
+    row = await cur.fetchone()
+    return dict(row) if row else None
+
+
+async def kb_list(guild_id: int) -> list[dict]:
+    cur = await _db.execute(
+        "SELECT slug, title, updated_at FROM knowledge_base "
+        "WHERE guild_id = ? ORDER BY title", (guild_id,),
+    )
+    return [dict(row) for row in await cur.fetchall()]
+
+
+async def kb_search(guild_id: int, query: str, limit: int = 10) -> list[dict]:
+    cur = await _db.execute(
+        "SELECT slug, title, content, updated_at FROM knowledge_base "
+        "WHERE guild_id = ? AND (title LIKE ? OR content LIKE ?) "
+        "ORDER BY title LIMIT ?",
+        (guild_id, f"%{query}%", f"%{query}%", limit),
+    )
+    return [dict(row) for row in await cur.fetchall()]
+
+
+async def kb_save(guild_id: int, slug: str, title: str, content: str) -> None:
+    now = int(time.time())
+    await _db.execute(
+        "INSERT INTO knowledge_base (guild_id, slug, title, content, updated_at) "
+        "VALUES (?, ?, ?, ?, ?) "
+        "ON CONFLICT (guild_id, slug) DO UPDATE SET "
+        "title = excluded.title, content = excluded.content, updated_at = excluded.updated_at",
+        (guild_id, slug, title, content, now),
+    )
+    await _db.commit()
+
+
+async def kb_delete(guild_id: int, slug: str) -> bool:
+    cur = await _db.execute(
+        "DELETE FROM knowledge_base WHERE guild_id = ? AND slug = ?", (guild_id, slug)
+    )
+    await _db.commit()
+    return cur.rowcount > 0
 
 
 # -- manuscripts --------------------------------------------------------------

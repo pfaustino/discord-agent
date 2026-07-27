@@ -21,6 +21,51 @@ class DbTestCase(unittest.IsolatedAsyncioTestCase):
         await db.close_db()
 
 
+class KnowledgeBaseTest(DbTestCase):
+    async def test_save_creates_and_get_returns_it(self):
+        await db.kb_save(1, "spin-up-node-repo", "Spin up a Node repo",
+                          "1. clone 2. npm install 3. npm run dev")
+        entry = await db.kb_get(1, "spin-up-node-repo")
+        self.assertEqual(entry["title"], "Spin up a Node repo")
+        self.assertIn("npm install", entry["content"])
+
+    async def test_get_missing_entry_is_none(self):
+        self.assertIsNone(await db.kb_get(1, "nope"))
+
+    async def test_save_same_slug_overwrites(self):
+        await db.kb_save(1, "deploy", "Deploy", "old steps")
+        await db.kb_save(1, "deploy", "Deploy", "corrected steps")
+        entry = await db.kb_get(1, "deploy")
+        self.assertEqual(entry["content"], "corrected steps")
+
+    async def test_list_returns_titles_without_content(self):
+        await db.kb_save(1, "a", "Entry A", "content a")
+        await db.kb_save(1, "b", "Entry B", "content b")
+        entries = await db.kb_list(1)
+        self.assertEqual({e["title"] for e in entries}, {"Entry A", "Entry B"})
+        self.assertNotIn("content", entries[0])
+
+    async def test_search_matches_title_and_content(self):
+        await db.kb_save(1, "node-setup", "Node repo setup", "run npm install first")
+        await db.kb_save(1, "python-setup", "Python repo setup", "run pip install first")
+        by_title = await db.kb_search(1, "Node")
+        self.assertEqual([e["slug"] for e in by_title], ["node-setup"])
+        by_content = await db.kb_search(1, "pip install")
+        self.assertEqual([e["slug"] for e in by_content], ["python-setup"])
+
+    async def test_entries_are_isolated_per_guild(self):
+        await db.kb_save(1, "x", "X", "guild 1 content")
+        await db.kb_save(2, "x", "X", "guild 2 content")
+        self.assertEqual((await db.kb_get(1, "x"))["content"], "guild 1 content")
+        self.assertEqual((await db.kb_get(2, "x"))["content"], "guild 2 content")
+
+    async def test_delete_removes_entry_and_reports_whether_it_existed(self):
+        await db.kb_save(1, "temp", "Temp", "content")
+        self.assertTrue(await db.kb_delete(1, "temp"))
+        self.assertIsNone(await db.kb_get(1, "temp"))
+        self.assertFalse(await db.kb_delete(1, "temp"))
+
+
 class ManuscriptTest(DbTestCase):
     async def test_append_creates_and_grows_the_manuscript(self):
         await db.append_manuscript(1, 42, "chapter one")

@@ -19,6 +19,7 @@ from discord.ext import commands
 
 import db
 import documents
+import knowledge
 import memory
 import openrouter
 import tools
@@ -92,13 +93,15 @@ class AI(commands.Cog):
         )
 
     def _tool_handler(self, message: discord.Message):
-        """Route tool calls: chat-log recall to memory, management tools to
-        agent_tools, the rest to tools."""
+        """Route tool calls: chat-log recall to memory, knowledge base to
+        knowledge, management tools to agent_tools, the rest to tools."""
         async def handler(name: str, args: dict) -> str:
             if name == "recall_chat_log":
                 result = await memory.recall(
                     message.guild.id, member=args.get("member"), query=args.get("query"),
                     limit=int(args.get("limit", 40) or 40))
+            elif name.startswith("kb_"):
+                result = await knowledge.run_tool(message.guild.id, name, args)
             elif name in agent_tools.TOOLS:
                 result = await agent_tools.execute(self.bot, message, name, args)
             else:
@@ -131,7 +134,7 @@ class AI(commands.Cog):
 
         channel_history.append({"role": "user", "content": f"{message.author.display_name}: {content}"})
 
-        schemas = list(tools.TOOL_SCHEMAS) + [memory.RECALL_TOOL_SCHEMA]
+        schemas = list(tools.TOOL_SCHEMAS) + [memory.RECALL_TOOL_SCHEMA] + knowledge.KB_TOOL_SCHEMAS
         if owner:
             schemas += agent_tools.TOOL_SCHEMAS
 
@@ -195,6 +198,8 @@ class AI(commands.Cog):
                 return await memory.recall(
                     interaction.guild.id, member=args.get("member"), query=args.get("query"),
                     limit=int(args.get("limit", 40) or 40))
+            if name.startswith("kb_"):
+                return await knowledge.run_tool(interaction.guild.id, name, args)
             return await tools.run_tool(name, args)
 
         try:
@@ -202,7 +207,8 @@ class AI(commands.Cog):
                 [{"role": "system", "content": system_prompt},
                  {"role": "user", "content": question}],
                 model=model,
-                tools=tools.TOOL_SCHEMAS + [memory.RECALL_TOOL_SCHEMA], tool_handler=handler,
+                tools=tools.TOOL_SCHEMAS + [memory.RECALL_TOOL_SCHEMA] + knowledge.KB_TOOL_SCHEMAS,
+                tool_handler=handler,
             )
         except openrouter.OpenRouterError as exc:
             log.warning("OpenRouter error: %s", exc)
@@ -272,6 +278,28 @@ class AI(commands.Cog):
         file = discord.File(io.BytesIO(content.encode("utf-8")), filename="manuscript.txt")
         await interaction.response.send_message(
             f"Your manuscript ({len(content)} chars):", file=file, ephemeral=True)
+
+    @app_commands.command(name="knowledge", description=(
+        "View Max's knowledge base of learned procedures, or forget one"))
+    @app_commands.describe(
+        topic="Search term (omit to list every entry's title)",
+        forget="Title of an entry to permanently delete (owner-only)")
+    async def knowledge_cmd(self, interaction: discord.Interaction, topic: str | None = None,
+                            forget: str | None = None):
+        if forget is not None:
+            if not is_owner(interaction.user.id):
+                await interaction.response.send_message(
+                    "Only the bot owner can delete knowledge base entries.", ephemeral=True)
+                return
+            removed = await db.kb_delete(interaction.guild.id, knowledge.slugify(forget))
+            await interaction.response.send_message(
+                f"Forgot {forget!r}." if removed else f"No entry titled {forget!r}.", ephemeral=True)
+            return
+        if topic:
+            text = await knowledge.search(interaction.guild.id, topic)
+        else:
+            text = await knowledge.list_entries(interaction.guild.id)
+        await interaction.response.send_message(text[:1990], ephemeral=True)
 
 
 async def setup(bot: commands.Bot):

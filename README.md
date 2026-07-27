@@ -17,8 +17,8 @@ tools, wake pipeline, prompts, models, limitations, roadmap)
 - Roles: `/giverole` `/takerole` `/createrole` `/deleterole`
 - Channels: `/createchannel` `/deletechannel` `/settopic`
 - Utility: `/ping` `/serverinfo` `/userinfo` `/say`
-- AI: `/ask`, `/aireset`, `/manuscript`, and the bot replies whenever
-  it's @mentioned
+- AI: `/ask`, `/aireset`, `/manuscript`, `/knowledge`, and the bot replies
+  whenever it's @mentioned
 - AI tools: DuckDuckGo web search, GitHub repo analysis (share a repo link
   and the bot pulls its stats, languages, and README to discuss it), and
   full read-only visibility into the bot's own GitHub repo — every branch,
@@ -58,6 +58,14 @@ tools, wake pipeline, prompts, models, limitations, roadmap)
   profile field. Completely separate from durable memory and profile
   cards, never summarized, compressed, or rewritten. `/manuscript` sends
   it back as a text file, or clears it
+- Knowledge base: procedural memory, separate from durable/working/profile
+  memory (which is facts about people) — reusable "how to do X" steps.
+  Before improvising an unfamiliar multi-step task, or asking how to do
+  something, the bot checks it first (`kb_search`); if nothing matches, it
+  asks instead of guessing, then saves the resolved procedure (`kb_save`)
+  so nobody has to walk it through the same thing twice. Guild-wide, not
+  tied to one person; `/knowledge` lists or searches it, and the owner can
+  delete an entry
 - Voice monitoring (hybrid): a Node.js sidecar (`listener/`) joins occupied
   voice channels — it speaks Discord's DAVE E2EE voice protocol via
   discord.js, which Python libraries don't support yet — receives each
