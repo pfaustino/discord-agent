@@ -53,6 +53,18 @@ CREATE TABLE IF NOT EXISTS memory_versions (
     content    TEXT NOT NULL,
     created_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS manuscripts (
+    guild_id   INTEGER NOT NULL,
+    user_id    INTEGER NOT NULL,
+    content    TEXT NOT NULL DEFAULT '',
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (guild_id, user_id)
+);
+CREATE TABLE IF NOT EXISTS dictation_mode (
+    guild_id INTEGER NOT NULL,
+    user_id  INTEGER NOT NULL,
+    PRIMARY KEY (guild_id, user_id)
+);
 CREATE TABLE IF NOT EXISTS turns (
     guild_id     INTEGER NOT NULL,
     seq          INTEGER NOT NULL,
@@ -156,7 +168,18 @@ DEFAULTS = {
         "you before and your summarized memory doesn't have it (or only has a "
         "vague version of it), use the recall_chat_log tool to search the "
         "actual log by member and/or keyword before saying you don't know or "
-        "don't remember."
+        "don't remember.\n\n"
+        "For long-form stuff the owner is dictating to you on purpose — a "
+        "life story, a book draft, anything meant to be kept word for word "
+        "rather than boiled down into a fact or a profile field — that's "
+        "what dictation mode (/dictate, owner-only) is for: while it's on, "
+        "everything the owner says is appended verbatim to their manuscript "
+        "(/manuscript to view or clear it), completely separate from durable "
+        "memory and profile cards and never summarized or compressed. This "
+        "is the owner's own thing, not a per-member feature. If the owner is "
+        "clearly telling you something long and personal they want kept in "
+        "full, point them at /dictate rather than letting it only go through "
+        "the lossy summarized memory path."
     ),
     "ai_channels": [],
     # voice monitoring (audio capture via the Node.js sidecar in listener/)
@@ -344,6 +367,70 @@ async def get_chat_log(guild_id: int, speaker_query: str | None = None,
     params.append(limit)
     cur = await _db.execute(sql, params)
     return [dict(row) for row in await cur.fetchall()]
+
+
+# -- manuscripts --------------------------------------------------------------
+#
+# The owner's own long-form dictation (a life story, a book draft — anything
+# meant to be kept verbatim, not summarized) — /dictate and /manuscript in
+# bot/cogs/ai.py are owner-only, this is not a per-member feature. Unlike
+# durable memory or a profile card, nothing here is ever rewritten or
+# compressed by the AI: every turn recorded while dictation mode is on is
+# appended as-is. Growth is unbounded by design — a document, not a buffer.
+# (Keyed by guild_id+user_id at the storage layer only because that's the
+# natural key everything else in this file uses — access control lives in
+# the command layer, not here.)
+
+async def get_manuscript(guild_id: int, user_id: int) -> str:
+    cur = await _db.execute(
+        "SELECT content FROM manuscripts WHERE guild_id = ? AND user_id = ?",
+        (guild_id, user_id),
+    )
+    row = await cur.fetchone()
+    return row["content"] if row else ""
+
+
+async def append_manuscript(guild_id: int, user_id: int, text: str) -> None:
+    existing = await get_manuscript(guild_id, user_id)
+    new_content = f"{existing}\n\n{text}" if existing else text
+    now = int(time.time())
+    await _db.execute(
+        "INSERT INTO manuscripts (guild_id, user_id, content, updated_at) "
+        "VALUES (?, ?, ?, ?) "
+        "ON CONFLICT (guild_id, user_id) DO UPDATE SET "
+        "content = excluded.content, updated_at = excluded.updated_at",
+        (guild_id, user_id, new_content, now),
+    )
+    await _db.commit()
+
+
+async def clear_manuscript(guild_id: int, user_id: int) -> None:
+    await _db.execute(
+        "DELETE FROM manuscripts WHERE guild_id = ? AND user_id = ?", (guild_id, user_id)
+    )
+    await _db.commit()
+
+
+async def set_dictation_mode(guild_id: int, user_id: int, on: bool) -> None:
+    if on:
+        await _db.execute(
+            "INSERT OR IGNORE INTO dictation_mode (guild_id, user_id) VALUES (?, ?)",
+            (guild_id, user_id),
+        )
+    else:
+        await _db.execute(
+            "DELETE FROM dictation_mode WHERE guild_id = ? AND user_id = ?",
+            (guild_id, user_id),
+        )
+    await _db.commit()
+
+
+async def is_dictation_mode(guild_id: int, user_id: int) -> bool:
+    cur = await _db.execute(
+        "SELECT 1 FROM dictation_mode WHERE guild_id = ? AND user_id = ?",
+        (guild_id, user_id),
+    )
+    return (await cur.fetchone()) is not None
 
 
 # -- warnings ---------------------------------------------------------------

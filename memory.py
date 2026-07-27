@@ -177,9 +177,21 @@ def record_turn(guild_id: int, speaker: str, text: str, source: str = "text",
     # the process dies (redeploy, crash) before a consolidation covering this
     # turn finishes, the deque is gone too, and without this write whatever
     # was just said would be lost forever instead of replayed on restart.
-    _schedule(db.add_turn(guild_id, seq, speaker, user_id, turn["text"],
-                          source, channel, turn["ts"]))
+    # (The full, untruncated text is what's persisted/appended here — the
+    # TURN_MAX_CHARS cap above only applies to what consolidation reads.)
+    _schedule(_persist_turn(guild_id, seq, speaker, user_id, text,
+                            source, channel, turn["ts"]))
     _trigger_consolidation(guild_id)
+
+
+async def _persist_turn(guild_id: int, seq: int, speaker: str, user_id: int | None,
+                        text: str, source: str, channel: str, ts: float) -> None:
+    await db.add_turn(guild_id, seq, speaker, user_id, text, source, channel, ts)
+    # Dictation mode: verbatim, unsummarized capture for whoever explicitly
+    # opted in (life story, book draft, anything meant to be kept word for
+    # word rather than folded through consolidation's lossy compression).
+    if user_id is not None and await db.is_dictation_mode(guild_id, user_id):
+        await db.append_manuscript(guild_id, user_id, text)
 
 
 async def restore_pending_turns() -> None:
