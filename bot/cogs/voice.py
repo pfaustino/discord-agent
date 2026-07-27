@@ -115,12 +115,13 @@ FISH_TAG_PROMPT = (
     "\nYour reply is spoken aloud through a voice engine that understands "
     "emotion tags. Sprinkle tags into your reply — in parentheses, at the "
     "start of a sentence — to give your voice the right delivery. Use them "
-    "naturally, 1-3 per reply, matching your chill persona and the moment. "
+    "naturally, 1-3 per reply, matching YOUR ACTUAL PERSONA above and the "
+    "moment — not a generic tone, whatever character you've been given. "
     "Available tags: (relaxed) (amused) (excited) (curious) (confident) "
     "(joyful) (serious) (sarcastic) (comforting) (empathetic) (surprised) "
     "(hesitating) (whispering) (soft tone) (laughing) (chuckling) (sighing) "
-    "(break). Example: \"(relaxed) honestly dude, both of you have a point. "
-    "(chuckling) but the tabs-vs-spaces thing died in 2015.\""
+    "(break). These are delivery cues, not a script — pick whichever tags "
+    "fit your persona's voice in the moment, not a fixed set."
 )
 
 FISH_S2_TAG_PROMPT = (
@@ -130,10 +131,10 @@ FISH_S2_TAG_PROMPT = (
     "natural description works: [relaxed] [excited] [whispering] [deadpan] "
     "[slows down, thoughtful] [laughing nervously]. It also does paralanguage "
     "sounds in parentheses: (laugh) (sigh) (breath) (break) (long-break). "
-    "Use a few per reply, matching your chill persona and the moment. "
-    "Example: \"[relaxed] honestly dude, both of you have a point. (laugh) "
-    "[deadpan] but the tabs-vs-spaces war died in 2015. [soft, sincere] "
-    "ship the thing, that's what matters.\""
+    "Use a few per reply, matching YOUR ACTUAL PERSONA above and the moment "
+    "— the directions should sound like your character, not a generic "
+    "narrator. Since it's free-form text, describe delivery however your "
+    "persona would actually deliver it."
 )
 
 
