@@ -32,7 +32,7 @@ import openrouter
 import tools
 import transcription
 import tts
-from bot import agent_tools
+from bot import agent_tools, sandbox_tools
 from bot.utils import is_owner, log_action, owner_only
 
 log = logging.getLogger("voice")
@@ -322,11 +322,13 @@ class Voice(commands.Cog):
                     limit=int(args.get("limit", 40) or 40))
             if owner and name in agent_tools.TOOLS:
                 return await agent_tools.execute(self.bot, _msg, name, args)
+            if owner and name in sandbox_tools.TOOLS:
+                return await sandbox_tools.execute(self.bot, _msg, name, args)
             return await tools.run_tool(name, args)
 
         on_tool_calls = None
         if owner:
-            schemas += agent_tools.TOOL_SCHEMAS
+            schemas += agent_tools.TOOL_SCHEMAS + sandbox_tools.TOOL_SCHEMAS
 
             async def on_tool_calls(tool_calls):
                 blurb = _describe_tool_calls(tool_calls)
