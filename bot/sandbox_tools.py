@@ -8,11 +8,14 @@ execute() re-checks before running anything. This starts out owner-only by
 design (not a repo whitelist) — extending it to approved non-owner users
 later just means changing that check.
 
-One sandbox session is kept per Discord channel, so a whole
+One sandbox session is kept per Discord server (guild), not per channel —
+a repo cloned from a text channel is immediately usable from voice, and
+vice versa, since it's the same owner working the same project regardless
+of which channel or modality they're using right now. A whole
 clone -> install -> run -> screenshot -> edit -> push conversation can span
-many tool calls without re-cloning. The sandbox's own idle timeout is
-refreshed on every call and tears it down automatically if the channel goes
-quiet; sandbox_stop kills it immediately.
+many tool calls, across text and voice, without re-cloning. The sandbox's
+own idle timeout is refreshed on every call and tears it down automatically
+if it goes quiet; sandbox_stop kills it immediately.
 """
 import io
 import json
@@ -74,7 +77,7 @@ class SandboxSession:
         self.browser_ready = False
 
 
-_sessions: dict[int, SandboxSession] = {}  # keyed by Discord channel id
+_sessions: dict[int, SandboxSession] = {}  # keyed by Discord guild id
 
 
 def _cap(text) -> str:
@@ -122,9 +125,9 @@ async def _call(coro):
 
 
 def _require_session(message: discord.Message) -> SandboxSession:
-    session = _sessions.get(message.channel.id)
+    session = _sessions.get(message.guild.id)
     if session is None:
-        raise ToolError("No active sandbox in this channel — clone a repo first with sandbox_clone.")
+        raise ToolError("No active sandbox for this server — clone a repo first with sandbox_clone.")
     return session
 
 
@@ -161,7 +164,7 @@ async def _sandbox_clone(bot, message, args):
     owner, name = _parse_repo(str(args["repo"]).strip())
     branch = args.get("branch")
 
-    old = _sessions.pop(message.channel.id, None)
+    old = _sessions.pop(message.guild.id, None)
     if old is not None:
         try:
             await old.sandbox.kill()
@@ -191,7 +194,7 @@ async def _sandbox_clone(bot, message, args):
         current_branch = branch or "main"
     listing = await _run(sandbox, f"ls -la {repo_dir}")
 
-    _sessions[message.channel.id] = SandboxSession(sandbox, owner, name, repo_dir, current_branch)
+    _sessions[message.guild.id] = SandboxSession(sandbox, owner, name, repo_dir, current_branch)
     return (
         f"Cloned {owner}/{name} (branch {current_branch}) into the sandbox at {repo_dir}.\n"
         f"Top-level contents:\n{_cap(listing.stdout)}"
@@ -316,9 +319,9 @@ async def _sandbox_push(bot, message, args):
 
 
 async def _sandbox_stop(bot, message, args):
-    session = _sessions.pop(message.channel.id, None)
+    session = _sessions.pop(message.guild.id, None)
     if session is None:
-        return "No active sandbox in this channel."
+        return "No active sandbox for this server."
     try:
         await session.sandbox.kill()
     except Exception as exc:
@@ -359,7 +362,8 @@ TOOLS: dict[str, tuple[dict, callable]] = {
         "machine you run on) so it can be installed, run, edited, and pushed. "
         "Only clone/run someone's code after the owner has explicitly told "
         "you to — ask first and wait for a clear yes. Replaces any sandbox "
-        "already active in this channel.",
+        "already active for this server (shared across text and voice — "
+        "there's one active project at a time, not one per channel).",
         {"repo": _str("Repository as owner/name or a github.com URL"),
          "branch": _str("Branch to check out (optional, defaults to the repo's default branch)")},
         ["repo"]), _sandbox_clone),
@@ -406,7 +410,7 @@ TOOLS: dict[str, tuple[dict, callable]] = {
          "branch": _str("Branch to push to (optional, defaults to the branch that was checked out)")},
         ["message"]), _sandbox_push),
     "sandbox_stop": (_schema(
-        "sandbox_stop", "Tear down the active sandbox in this channel to stop billing for it."),
+        "sandbox_stop", "Tear down the active sandbox for this server to stop billing for it."),
         _sandbox_stop),
 }
 
