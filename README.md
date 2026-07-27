@@ -37,13 +37,19 @@ tools, wake pipeline, prompts, models, limitations, roadmap)
   cooldowns, budgets, energy) rules on every drafted contribution —
   `/pressure` shows state or toggles it (owner)
 - Persistent memory, updated live: a working-memory file (current topic,
-  open questions, recent meaningful turns) and a durable-memory file (dated
-  facts/preferences/decisions with confidence) are both rewritten after
-  every single turn — text or voice, from anyone, in every channel, tagged
-  with exactly where it happened (`#general`, `voice/General`, ...) — so
-  something posted in one channel can be recalled later from a completely
-  different channel or from voice, no batching delay; stored versioned in
-  SQLite, injected into every reply; `/memory` shows or wipes it (owner)
+  open questions, recent meaningful turns), a durable-memory file (dated
+  facts/preferences/decisions with confidence), and a per-member profile
+  card (goals, active projects, constraints, vibe notes, freeform notes)
+  are all rewritten after every single turn — text or voice, from anyone,
+  in every channel, tagged with exactly where it happened (`#general`,
+  `voice/General`, ...) — so something posted in one channel can be
+  recalled later from a completely different channel or from voice, no
+  batching delay; stored versioned in SQLite, injected into every reply;
+  `/memory` shows or wipes it (owner). Every raw turn is also persisted
+  immediately (before consolidation runs) and kept forever as a permanent,
+  searchable chat log — if a redeploy hits mid-consolidation, unconsolidated
+  turns are replayed on restart instead of lost, and the bot can search the
+  actual log (`recall_chat_log`) whenever a summary alone doesn't have it
 - Voice monitoring (hybrid): a Node.js sidecar (`listener/`) joins occupied
   voice channels — it speaks Discord's DAVE E2EE voice protocol via
   discord.js, which Python libraries don't support yet — receives each

@@ -53,9 +53,22 @@ CREATE TABLE IF NOT EXISTS memory_versions (
     content    TEXT NOT NULL,
     created_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS turns (
+    guild_id     INTEGER NOT NULL,
+    seq          INTEGER NOT NULL,
+    speaker      TEXT NOT NULL,
+    user_id      INTEGER,
+    text         TEXT NOT NULL,
+    source       TEXT NOT NULL,
+    channel      TEXT,
+    ts           REAL NOT NULL,
+    consolidated INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (guild_id, seq)
+);
 CREATE INDEX IF NOT EXISTS idx_warnings_guild_user ON warnings (guild_id, user_id);
 CREATE INDEX IF NOT EXISTS idx_logs_guild ON mod_logs (guild_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_memver ON memory_versions (guild_id, kind, version);
+CREATE INDEX IF NOT EXISTS idx_turns_guild_consolidated ON turns (guild_id, consolidated);
 """
 
 DEFAULTS = {
@@ -136,7 +149,14 @@ DEFAULTS = {
         "whether you saw something posted somewhere, or references something "
         "from a different channel or from voice, check your memory before "
         "answering. Only say you don't have something if it's genuinely not "
-        "there — don't reflexively claim you can't see text channels."
+        "there — don't reflexively claim you can't see text channels.\n\n"
+        "Durable memory and profile cards are a fast, AI-summarized index, not "
+        "the only record — every single turn ever said, text or voice, is also "
+        "kept forever in a permanent chat log. If someone asks what they told "
+        "you before and your summarized memory doesn't have it (or only has a "
+        "vague version of it), use the recall_chat_log tool to search the "
+        "actual log by member and/or keyword before saying you don't know or "
+        "don't remember."
     ),
     "ai_channels": [],
     # voice monitoring (audio capture via the Node.js sidecar in listener/)
@@ -253,7 +273,77 @@ async def set_memory(guild_id: int, kind: str, content: str) -> int:
 async def clear_memory(guild_id: int) -> None:
     await _db.execute("DELETE FROM memory WHERE guild_id = ?", (guild_id,))
     await _db.execute("DELETE FROM memory_versions WHERE guild_id = ?", (guild_id,))
+    await _db.execute("DELETE FROM turns WHERE guild_id = ?", (guild_id,))
     await _db.commit()
+
+
+# -- raw conversation turns ---------------------------------------------------
+#
+# This is the permanent chat/voice log — every turn, kept forever, not just a
+# scratch buffer for consolidation. Two jobs:
+#
+# 1. Durability: a turn is written here the instant it's recorded, before
+#    consolidation ever runs, so a process restart mid-consolidation (a
+#    Railway redeploy, a crash) can't silently lose whatever was just said —
+#    unconsolidated rows are replayed and folded in on the next startup.
+# 2. A ground truth the AI can search directly (recall_chat_log in memory.py)
+#    when durable memory or a profile card under-captured something — the
+#    actual words said are never gone just because a summarization pass
+#    compressed or missed them.
+#
+# `consolidated` marks whether a row has already been folded into durable/
+# working memory or a profile card; only unconsolidated rows are replayed at
+# startup. Rows are never deleted except by an explicit /memory wipe.
+
+async def add_turn(guild_id: int, seq: int, speaker: str, user_id: int | None,
+                    text: str, source: str, channel: str, ts: float) -> None:
+    await _db.execute(
+        "INSERT OR REPLACE INTO turns "
+        "(guild_id, seq, speaker, user_id, text, source, channel, ts, consolidated) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)",
+        (guild_id, seq, speaker, user_id, text, source, channel, ts),
+    )
+    await _db.commit()
+
+
+async def get_pending_turn_guilds() -> list[int]:
+    cur = await _db.execute("SELECT DISTINCT guild_id FROM turns WHERE consolidated = 0")
+    return [row["guild_id"] for row in await cur.fetchall()]
+
+
+async def get_pending_turns(guild_id: int) -> list[dict]:
+    """Turns not yet folded into memory — reloaded into the live buffer at
+    startup so a mid-consolidation restart doesn't lose them."""
+    cur = await _db.execute(
+        "SELECT seq, speaker, user_id, text, source, channel, ts FROM turns "
+        "WHERE guild_id = ? AND consolidated = 0 ORDER BY seq", (guild_id,)
+    )
+    return [dict(row) for row in await cur.fetchall()]
+
+
+async def mark_turns_consolidated(guild_id: int, seq: int) -> None:
+    await _db.execute(
+        "UPDATE turns SET consolidated = 1 WHERE guild_id = ? AND seq <= ?",
+        (guild_id, seq),
+    )
+    await _db.commit()
+
+
+async def get_chat_log(guild_id: int, speaker_query: str | None = None,
+                        text_query: str | None = None, limit: int = 50) -> list[dict]:
+    """Most recent matching turns (caller reverses for chronological order)."""
+    sql = "SELECT seq, speaker, user_id, text, source, channel, ts FROM turns WHERE guild_id = ?"
+    params: list = [guild_id]
+    if speaker_query:
+        sql += " AND speaker LIKE ?"
+        params.append(f"%{speaker_query}%")
+    if text_query:
+        sql += " AND text LIKE ?"
+        params.append(f"%{text_query}%")
+    sql += " ORDER BY seq DESC LIMIT ?"
+    params.append(limit)
+    cur = await _db.execute(sql, params)
+    return [dict(row) for row in await cur.fetchall()]
 
 
 # -- warnings ---------------------------------------------------------------

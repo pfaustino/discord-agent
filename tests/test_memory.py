@@ -17,6 +17,9 @@ class LiveConsolidationTest(unittest.IsolatedAsyncioTestCase):
         memory._turns.clear()
         memory._consolidating.clear()
         memory._pending.clear()
+        patcher = mock.patch.object(memory.db, "add_turn", mock.AsyncMock())
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     async def test_every_turn_triggers_consolidation(self):
         calls = []
@@ -97,7 +100,8 @@ class ChannelTaggingTest(unittest.TestCase):
 
     def test_record_turn_stores_channel_on_the_buffered_turn(self):
         memory._turns.clear()
-        memory.record_turn(1, "alice", "posted the invoice", "text", channel="general")
+        with mock.patch.object(memory.db, "add_turn", mock.AsyncMock()):
+            memory.record_turn(1, "alice", "posted the invoice", "text", channel="general")
         turn = memory._turns[1][-1]
         self.assertEqual(turn["channel"], "general")
         self.assertEqual(turn["source"], "text")
@@ -145,6 +149,9 @@ class ConsolidateDeltaTest(unittest.IsolatedAsyncioTestCase):
             patcher = mock.patch.object(memory.db, target, fn)
             patcher.start()
             self.addCleanup(patcher.stop)
+        patcher = mock.patch.object(memory.db, "mark_turns_consolidated", mock.AsyncMock())
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     async def test_only_new_turns_are_sent_to_the_model(self):
         prompts = []
@@ -213,6 +220,125 @@ class ConsolidateDeltaTest(unittest.IsolatedAsyncioTestCase):
         with mock.patch.object(memory.openrouter, "chat", fake_chat):
             await memory._consolidate(1)  # nothing ever recorded for guild 1
         self.assertFalse(called)
+
+
+class TurnDurabilityTest(unittest.IsolatedAsyncioTestCase):
+    """record_turn must persist the raw turn before consolidation runs, and
+    restore_pending_turns must replay anything left over from a process that
+    died mid-consolidation — otherwise a redeploy at the wrong moment loses
+    whatever was just said, since the in-memory buffer doesn't survive a
+    restart on its own."""
+
+    async def asyncSetUp(self):
+        memory._turns.clear()
+        memory._consolidating.clear()
+        memory._pending.clear()
+        memory._next_seq.clear()
+        memory._last_consolidated_seq.clear()
+
+    async def test_record_turn_persists_before_consolidating(self):
+        added = []
+
+        async def fake_add_turn(guild_id, seq, speaker, user_id, text, source, channel, ts):
+            added.append((guild_id, seq, speaker, text))
+
+        with mock.patch.object(memory.db, "add_turn", fake_add_turn), \
+             mock.patch.object(memory, "_consolidate", mock.AsyncMock()):
+            memory.record_turn(1, "travis", "a lot of detailed information")
+            await asyncio.sleep(0)
+        self.assertEqual(added, [(1, 1, "travis", "a lot of detailed information")])
+
+    async def test_restore_replays_persisted_turns_and_retriggers_consolidation(self):
+        persisted = [
+            {"seq": 1, "speaker": "travis", "user_id": 42, "text": "first",
+             "source": "text", "channel": "general", "ts": 0},
+            {"seq": 2, "speaker": "travis", "user_id": 42, "text": "second",
+             "source": "text", "channel": "general", "ts": 0},
+        ]
+        calls = []
+
+        async def fake_consolidate(guild_id):
+            calls.append(guild_id)
+
+        with mock.patch.object(memory.db, "get_pending_turn_guilds", mock.AsyncMock(return_value=[1])), \
+             mock.patch.object(memory.db, "get_pending_turns", mock.AsyncMock(return_value=persisted)), \
+             mock.patch.object(memory, "_consolidate", fake_consolidate):
+            await memory.restore_pending_turns()
+            await asyncio.sleep(0)
+
+        self.assertEqual([t["text"] for t in memory._turns[1]], ["first", "second"])
+        self.assertEqual(memory._next_seq[1], 2)
+        self.assertEqual(calls, [1])
+
+    async def test_restore_does_nothing_when_nothing_pending(self):
+        with mock.patch.object(memory.db, "get_pending_turn_guilds", mock.AsyncMock(return_value=[])):
+            await memory.restore_pending_turns()  # must not raise
+        self.assertEqual(len(memory._turns), 0)
+
+
+class ProfileNotesFieldTest(unittest.IsolatedAsyncioTestCase):
+    """The profile card's catch-all 'notes' field must round-trip through
+    _save_profile the same as the original four fields."""
+
+    async def asyncSetUp(self):
+        self.store = {}
+
+        async def fake_get_memory(guild_id, kind):
+            return self.store.get((guild_id, kind), ""), 0
+
+        async def fake_set_memory(guild_id, kind, content):
+            self.store[(guild_id, kind)] = content
+            return 1
+
+        for target, fn in (("get_memory", fake_get_memory), ("set_memory", fake_set_memory)):
+            patcher = mock.patch.object(memory.db, target, fn)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    async def test_notes_field_is_saved_and_merged(self):
+        await memory._save_profile(1, 42, "travis", {"notes": "runs a Discord bot called Max"})
+        card = await memory._load_profile(1, 42)
+        self.assertEqual(card["notes"], "runs a Discord bot called Max")
+
+        # A later round updating a different field must not wipe notes.
+        await memory._save_profile(1, 42, "travis", {"goals": "ship the voice pipeline"})
+        card = await memory._load_profile(1, 42)
+        self.assertEqual(card["notes"], "runs a Discord bot called Max")
+        self.assertEqual(card["goals"], "ship the voice pipeline")
+
+
+class RecallChatLogTest(unittest.IsolatedAsyncioTestCase):
+    """recall() must search the permanent chat log independently of whatever
+    the AI-summarized durable memory or profile cards currently say — the
+    whole point is a ground truth that survives a bad summarization pass."""
+
+    async def test_recall_formats_matches_chronologically(self):
+        # db.get_chat_log returns most-recent-first; recall must display
+        # oldest-first so it reads like a transcript, not reverse chat.
+        rows = [
+            {"seq": 2, "speaker": "travis", "user_id": 1, "text": "second thing",
+             "source": "text", "channel": "general", "ts": 200},
+            {"seq": 1, "speaker": "travis", "user_id": 1, "text": "first thing",
+             "source": "text", "channel": "general", "ts": 100},
+        ]
+        with mock.patch.object(memory.db, "get_chat_log",
+                               mock.AsyncMock(return_value=rows)) as fake:
+            result = await memory.recall(1, member="travis", query="thing", limit=5)
+        fake.assert_awaited_once_with(1, speaker_query="travis", text_query="thing", limit=5)
+        first_pos = result.index("first thing")
+        second_pos = result.index("second thing")
+        self.assertLess(first_pos, second_pos)
+
+    async def test_recall_reports_no_matches(self):
+        with mock.patch.object(memory.db, "get_chat_log", mock.AsyncMock(return_value=[])):
+            result = await memory.recall(1, query="nothing matches this")
+        self.assertIn("No matching", result)
+
+    async def test_recall_clamps_limit(self):
+        with mock.patch.object(memory.db, "get_chat_log",
+                               mock.AsyncMock(return_value=[])) as fake:
+            await memory.recall(1, limit=9999)
+        fake.assert_awaited_once_with(1, speaker_query=None, text_query=None, limit=100)
 
 
 class NoEventLoopTest(unittest.TestCase):

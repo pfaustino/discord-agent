@@ -20,7 +20,11 @@ it.
 Member profiles: consolidation tags every fact with the member it came from
 or is about (a system instruction baked into the consolidation prompt) and
 maintains one card per member — goals, active projects, constraints, vibe
-notes, last conversation date. Retrieval checks whether the person currently
+notes, a catch-all notes field for concrete details that don't fit those
+categories, and last conversation date. The prompt pushes for specifics
+(names, numbers, tools, exact preferences) over vague summaries, and fields
+aren't capped tight enough to force compression of genuinely dense
+information. Retrieval checks whether the person currently
 talking has a card; if they do, it's loaded first, ahead of the general
 guild dump, so a specific member isn't glossed over in a sea of unrelated
 facts. After every consolidation, a deterministic (non-LLM) check verifies
@@ -41,6 +45,25 @@ Everything lives in SQLite (db.memory) with atomic writes and the last 10
 versions archived. Turns come from text chat and voice transcription alike;
 the goal is to keep what changes what the bot would say next, not the whole
 archaeological record.
+
+Durability: the raw-turn buffer this module reasons from (_turns) is
+in-process only, so a bare consolidation design would lose anything said
+since the last successful run if the process died mid-consolidation — a
+Railway redeploy killing the bot the moment someone hands it a wall of
+detail, say. Every turn is also written to db.turns the instant it's
+recorded, before consolidation ever runs; restore_pending_turns(), called
+once at startup, replays whatever's still there (i.e. never made it through
+a successful consolidation) back into the buffer and immediately re-triggers
+consolidation for it, so a mid-flight kill loses at most the time it takes
+one SQLite insert to land, not a whole conversation.
+
+db.turns also never gets deleted once consolidated — it's kept as a
+permanent chat/voice log, not just a durability scratch pad. recall() (the
+recall_chat_log tool, available in every chat surface) searches it directly,
+by member and/or keyword, so if a consolidation pass ever compresses,
+misses, or under-details something, the actual words said are still there
+to go back to — the AI-summarized durable memory and profile cards are a
+fast-path index into this log, not the only copy of what was said.
 """
 import asyncio
 import json
@@ -58,7 +81,7 @@ TURN_BUFFER = 60         # raw turns kept per guild for consolidation to read
 TURN_MAX_CHARS = 300     # per-turn cap fed to the updater
 WORKING_MAX = 2500       # char caps requested from the model
 DURABLE_MAX = 5000
-PROFILE_FIELD_MAX = 400  # per-field cap on a profile card
+PROFILE_FIELD_MAX = 800  # per-field cap on a profile card
 
 # Preservation spot-check: a member's raw turns this round must overlap this
 # much (by significant-word set) with what the model kept about them, once
@@ -92,6 +115,15 @@ CONSOLIDATE_PROMPT = (
     "because their turns are dense or another member talked more this "
     "round: every member with substantive new information below must get "
     "a profile update.\n\n"
+    "Capture SPECIFICS, not summaries: names, numbers, dates, tool/tech "
+    "names, exact preferences, personal history, anything concrete. "
+    "'they mentioned a project' is useless; 'building a Discord bot called "
+    "Max on Railway, using OpenRouter' is what you're for. When a fact "
+    "doesn't fit goals/active_projects/constraints/vibe_notes, it still "
+    "belongs somewhere — put it in notes rather than leaving it out. "
+    "Never compress a member's turns into a vaguer restatement just to "
+    "save space; drop something only when it's truly superseded by "
+    "newer information about the same thing.\n\n"
     "DURABLE MEMORY (guild-wide facts, dated, confidence-tagged) — today "
     "is {today}:\n{durable}\n\n"
     "WORKING MEMORY (live conversation context):\n{working}\n\n"
@@ -105,12 +137,14 @@ CONSOLIDATE_PROMPT = (
     "Roll working memory into durable memory: merge, dedupe, drop "
     "superseded entries (durable under {durable_max} chars). Trim working "
     "memory to only still-live context (under {working_max} chars). "
-    "Profile card fields: goals, active_projects, constraints, "
-    "vibe_notes — each a short string.\n"
+    "Profile card fields: goals, active_projects, constraints, vibe_notes, "
+    "notes (catch-all for concrete facts about them that don't fit the "
+    "other fields — the more specific the better) — each a string, and "
+    "each can run long if there's genuinely that much detail to keep.\n"
     'Reply with ONLY a JSON object: {{"durable": "...", "working": "...", '
     '"profiles": {{"<member display name>": {{"goals": "...", '
-    '"active_projects": "...", "constraints": "...", "vibe_notes": "..."'
-    '}}}}}}\n'
+    '"active_projects": "...", "constraints": "...", "vibe_notes": "...", '
+    '"notes": "..."}}}}}}\n'
     'Only include members in "profiles" who had genuinely new or updated '
     "information this round."
 )
@@ -133,11 +167,37 @@ def record_turn(guild_id: int, speaker: str, text: str, source: str = "text",
     # watermark of 0 doesn't exclude the very first turn (0 > 0 is False).
     _next_seq[guild_id] += 1
     seq = _next_seq[guild_id]
-    _turns[guild_id].append({
+    turn = {
         "speaker": speaker, "user_id": user_id, "text": text[:TURN_MAX_CHARS],
         "source": source, "channel": channel, "ts": time.time(), "seq": seq,
-    })
+    }
+    _turns[guild_id].append(turn)
+    # Durability backstop: persist the raw turn before consolidation ever
+    # runs. Consolidation reads the in-memory deque, not this table — but if
+    # the process dies (redeploy, crash) before a consolidation covering this
+    # turn finishes, the deque is gone too, and without this write whatever
+    # was just said would be lost forever instead of replayed on restart.
+    _schedule(db.add_turn(guild_id, seq, speaker, user_id, turn["text"],
+                          source, channel, turn["ts"]))
     _trigger_consolidation(guild_id)
+
+
+async def restore_pending_turns() -> None:
+    """Reload turns that were persisted but never made it through a
+    successful consolidation before the last shutdown — e.g. a burst of
+    detail given right as a redeploy killed the process mid-consolidation —
+    so nothing said gets silently dropped. Call once at startup, after
+    db.init_db(); each recovered guild's backlog is folded in immediately."""
+    for guild_id in await db.get_pending_turn_guilds():
+        rows = await db.get_pending_turns(guild_id)
+        if not rows:
+            continue
+        for row in rows:
+            _turns[guild_id].append(row)
+        _next_seq[guild_id] = max(_next_seq[guild_id], rows[-1]["seq"])
+        log.info("Recovered %d unconsolidated turn(s) for guild %s after restart",
+                 len(rows), guild_id)
+        _trigger_consolidation(guild_id)
 
 
 def _trigger_consolidation(guild_id: int) -> None:
@@ -186,6 +246,60 @@ def _format_turns(turns: list[dict]) -> str:
     return "\n".join(f"[{location(t)}] {t['speaker']}: {t['text']}" for t in turns)
 
 
+def _format_log_turns(turns: list[dict]) -> str:
+    def location(t: dict) -> str:
+        if not t.get("channel"):
+            return t["source"]
+        return f"#{t['channel']}" if t["source"] == "text" else f"voice/{t['channel']}"
+    lines = []
+    for t in turns:
+        date = time.strftime("%Y-%m-%d %H:%M", time.localtime(t["ts"])) if t.get("ts") else "?"
+        lines.append(f"[{date} {location(t)}] {t['speaker']}: {t['text']}")
+    return "\n".join(lines)
+
+
+RECALL_TOOL_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "recall_chat_log",
+        "description": (
+            "Search the permanent raw chat/voice log for this server — every "
+            "turn ever recorded, not just what made it into durable memory "
+            "or a profile card summary. Use this when someone asks what they "
+            "told you before, references something you don't have "
+            "summarized, or you want to double-check exactly what was said "
+            "and when, instead of relying on a compressed summary."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "member": {"type": "string",
+                          "description": "Filter to one member's display name (optional)"},
+                "query": {"type": "string",
+                         "description": "Keyword/phrase to search for in the text (optional)"},
+                "limit": {"type": "integer",
+                         "description": "Max turns to return, most recent first (default 40, max 100)"},
+            },
+            "required": [],
+        },
+    },
+}
+
+
+async def recall(guild_id: int, member: str | None = None, query: str | None = None,
+                 limit: int = 40) -> str:
+    """Search the permanent raw chat log directly — the actual words said,
+    not the AI-summarized durable memory or profile cards — so a bad
+    consolidation pass or an under-detailed profile never means the
+    information is genuinely gone."""
+    limit = max(1, min(int(limit or 40), 100))
+    rows = await db.get_chat_log(guild_id, speaker_query=member or None,
+                                 text_query=query or None, limit=limit)
+    if not rows:
+        return "No matching chat history found."
+    return _format_log_turns(list(reversed(rows)))
+
+
 async def get_context(guild_id: int, user_id: int | None = None) -> str:
     """Memory block for injection into the system prompt ("" if empty).
 
@@ -212,7 +326,8 @@ async def _format_profile(guild_id: int, user_id: int) -> str:
         return ""
     lines = [f"Name: {card.get('name', '?')}"]
     for label, key in (("Goals", "goals"), ("Active projects", "active_projects"),
-                       ("Constraints", "constraints"), ("Vibe notes", "vibe_notes")):
+                       ("Constraints", "constraints"), ("Vibe notes", "vibe_notes"),
+                       ("Notes", "notes")):
         if card.get(key):
             lines.append(f"{label}: {card[key]}")
     if card.get("last_conversation"):
@@ -299,6 +414,11 @@ async def _consolidate(guild_id: int) -> None:
         return
     new_durable, new_working, profile_updates = parsed
     _last_consolidated_seq[guild_id] = new_turns[-1]["seq"]
+    # These turns are now safely folded into durable/working/profile
+    # storage — mark them consolidated so they're not replayed at the next
+    # startup. They stay in the table (never deleted) as the permanent,
+    # searchable chat log recall_chat_log reads from below.
+    _schedule(db.mark_turns_consolidated(guild_id, new_turns[-1]["seq"]))
 
     await db.set_memory(guild_id, "durable", new_durable[:DURABLE_MAX + 1000])
     await db.set_memory(guild_id, "working", new_working[:WORKING_MAX + 500])
@@ -338,7 +458,7 @@ async def _save_profile(guild_id: int, user_id: int, name: str, fields: dict) ->
     existing["name"] = name
     existing["user_id"] = user_id
     existing["last_conversation"] = time.strftime("%Y-%m-%d")
-    for key in ("goals", "active_projects", "constraints", "vibe_notes"):
+    for key in ("goals", "active_projects", "constraints", "vibe_notes", "notes"):
         value = fields.get(key)
         if value:
             existing[key] = str(value)[:PROFILE_FIELD_MAX]
