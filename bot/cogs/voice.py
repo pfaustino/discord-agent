@@ -27,6 +27,7 @@ from discord.ext import commands
 
 import config
 import db
+import knowledge
 import memory
 import openrouter
 import tools
@@ -311,7 +312,7 @@ class Voice(commands.Cog):
         transcript = "\n".join(f"{e['name']}: {e['text']}" for e in lines)
         model = await db.get_setting(guild.id, "ai_model")
 
-        schemas = list(tools.TOOL_SCHEMAS) + [memory.RECALL_TOOL_SCHEMA]
+        schemas = list(tools.TOOL_SCHEMAS) + [memory.RECALL_TOOL_SCHEMA] + knowledge.KB_TOOL_SCHEMAS
         fake_message = SimpleNamespace(
             guild=guild, channel=channel,
             author=guild.get_member(speaker_id) or discord.Object(id=speaker_id))
@@ -321,6 +322,8 @@ class Voice(commands.Cog):
                 return await memory.recall(
                     guild.id, member=args.get("member"), query=args.get("query"),
                     limit=int(args.get("limit", 40) or 40))
+            if name.startswith("kb_"):
+                return await knowledge.run_tool(guild.id, name, args)
             if owner and name in agent_tools.TOOLS:
                 return await agent_tools.execute(self.bot, _msg, name, args)
             if owner and name in sandbox_tools.TOOLS:
