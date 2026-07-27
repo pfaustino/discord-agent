@@ -258,6 +258,7 @@ class AI(commands.Cog):
         "Toggle dictation mode: while on, everything you say (voice or text) "
         "is appended verbatim to your manuscript — never summarized"))
     @app_commands.describe(on="true = start capturing everything you say verbatim, false = stop")
+    @owner_only()
     async def dictate(self, interaction: discord.Interaction, on: bool):
         await db.set_dictation_mode(interaction.guild.id, interaction.user.id, on)
         await interaction.response.send_message(
@@ -267,33 +268,22 @@ class AI(commands.Cog):
             "Dictation mode off. Nothing you already dictated was touched.",
             ephemeral=True)
 
-    @app_commands.command(description="View or clear a manuscript (your own long-form dictation)")
-    @app_commands.describe(
-        member="Whose manuscript (defaults to you; only the owner can view/clear someone else's)",
-        clear="Set true to permanently erase it instead of viewing it")
-    async def manuscript(self, interaction: discord.Interaction, member: discord.Member | None = None,
-                         clear: bool = False):
-        target = member or interaction.user
-        if target.id != interaction.user.id and not is_owner(interaction.user.id):
-            await interaction.response.send_message(
-                "Only the bot owner can view or clear someone else's manuscript.", ephemeral=True)
-            return
+    @app_commands.command(description="View or clear your manuscript (your own long-form dictation)")
+    @app_commands.describe(clear="Set true to permanently erase it instead of viewing it")
+    @owner_only()
+    async def manuscript(self, interaction: discord.Interaction, clear: bool = False):
         if clear:
-            await db.clear_manuscript(interaction.guild.id, target.id)
-            await interaction.response.send_message(
-                f"Manuscript cleared for {target.display_name}.", ephemeral=True)
+            await db.clear_manuscript(interaction.guild.id, interaction.user.id)
+            await interaction.response.send_message("Manuscript cleared.", ephemeral=True)
             return
-        content = await db.get_manuscript(interaction.guild.id, target.id)
+        content = await db.get_manuscript(interaction.guild.id, interaction.user.id)
         if not content:
             await interaction.response.send_message(
-                f"No manuscript for {target.display_name} yet — turn on `/dictate` and start talking.",
-                ephemeral=True)
+                "No manuscript yet — turn on `/dictate` and start talking.", ephemeral=True)
             return
-        file = discord.File(io.BytesIO(content.encode("utf-8")),
-                            filename=f"{target.display_name}-manuscript.txt")
+        file = discord.File(io.BytesIO(content.encode("utf-8")), filename="manuscript.txt")
         await interaction.response.send_message(
-            f"{target.display_name}'s manuscript ({len(content)} chars):",
-            file=file, ephemeral=True)
+            f"Your manuscript ({len(content)} chars):", file=file, ephemeral=True)
 
 
 async def setup(bot: commands.Bot):

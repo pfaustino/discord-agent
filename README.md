@@ -51,13 +51,13 @@ tools, wake pipeline, prompts, models, limitations, roadmap)
   searchable chat log — if a redeploy hits mid-consolidation, unconsolidated
   turns are replayed on restart instead of lost, and the bot can search the
   actual log (`recall_chat_log`) whenever a summary alone doesn't have it
-- Dictation mode: for long-form stuff meant to be kept word for word — a
-  life story, a book draft — instead of boiled down into a fact or a
-  profile field. `/dictate on:true` and everything you say from then on
-  (voice or text) is appended verbatim to your own manuscript, completely
-  separate from durable memory and profile cards and never summarized,
-  compressed, or rewritten. `/manuscript` sends it back as a text file
-  (or clears it); only the owner can view or clear someone else's
+- Dictation mode (owner-only): for long-form stuff meant to be kept word
+  for word — a life story, a book draft — instead of boiled down into a
+  fact or a profile field. `/dictate on:true` and everything the owner
+  says from then on (voice or text) is appended verbatim to their
+  manuscript, completely separate from durable memory and profile cards
+  and never summarized, compressed, or rewritten. `/manuscript` sends it
+  back as a text file, or clears it
 - Voice monitoring (hybrid): a Node.js sidecar (`listener/`) joins occupied
   voice channels — it speaks Discord's DAVE E2EE voice protocol via
   discord.js, which Python libraries don't support yet — receives each
