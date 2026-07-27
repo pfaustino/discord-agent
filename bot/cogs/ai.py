@@ -22,7 +22,7 @@ import documents
 import memory
 import openrouter
 import tools
-from bot import agent_tools
+from bot import agent_tools, sandbox_tools
 from bot.utils import is_owner, owner_only
 
 log = logging.getLogger("ai")
@@ -33,7 +33,7 @@ def _channel_name(channel) -> str:
 
 HISTORY_LEN = 20  # messages of context kept per channel
 MAX_AUTO_REPOS = 2  # GitHub links auto-analyzed per message
-MAX_TOOL_ROUNDS = 8  # model<->tool round trips per request
+MAX_TOOL_ROUNDS = 16  # model<->tool round trips per request (sandbox workflows are multi-step)
 
 MEMBER_NOTE = (
     "You can't take server actions for regular members from chat, so when "
@@ -57,7 +57,22 @@ OWNER_NOTE = (
     "- If a request is ambiguous and the action is destructive (ban, delete "
     "channel/role, purge), ask one short clarifying question first. "
     "Otherwise just act.\n"
-    "- After acting, briefly report what you did and the result."
+    "- After acting, briefly report what you did and the result.\n\n"
+    "You also have sandbox tools (sandbox_clone, sandbox_shell, "
+    "sandbox_read_file, sandbox_write_file, sandbox_screenshot, sandbox_push, "
+    "sandbox_stop) for working on git repos end-to-end: clone one into a "
+    "disposable cloud sandbox, install and run it, edit files, screenshot "
+    "what's running, and push changes back to GitHub.\n"
+    "- Never clone or run a repo's code without the owner explicitly telling "
+    "you to first — when they hand you a repo, ask whether they want it "
+    "installed/spun up, and wait for a clear yes before calling "
+    "sandbox_clone.\n"
+    "- Once it's running, screenshot it and show the owner before asking "
+    "what to change next.\n"
+    "- Make the edits they ask for with sandbox_write_file, then re-run and "
+    "re-screenshot so they can see the result.\n"
+    "- Only push when they tell you to, to whatever branch they want "
+    "(main is fine if that's what they say)."
 )
 
 
@@ -101,6 +116,8 @@ class AI(commands.Cog):
                     limit=int(args.get("limit", 40) or 40))
             elif name in agent_tools.TOOLS:
                 result = await agent_tools.execute(self.bot, message, name, args)
+            elif name in sandbox_tools.TOOLS:
+                result = await sandbox_tools.execute(self.bot, message, name, args)
             else:
                 result = await tools.run_tool(name, args)
             log.info("AI tool %s(%s) -> %s", name, str(args)[:200], result[:200])
@@ -133,7 +150,7 @@ class AI(commands.Cog):
 
         schemas = list(tools.TOOL_SCHEMAS) + [memory.RECALL_TOOL_SCHEMA]
         if owner:
-            schemas += agent_tools.TOOL_SCHEMAS
+            schemas += agent_tools.TOOL_SCHEMAS + sandbox_tools.TOOL_SCHEMAS
 
         messages = [{"role": "system", "content": system_prompt}, *channel_history]
         reply = await openrouter.chat(

@@ -24,8 +24,14 @@ tools, wake pipeline, prompts, models, limitations, roadmap)
   full read-only visibility into the bot's own GitHub repo — every branch,
   contributor pull requests with full diffs, branch comparisons, commits,
   and file contents at any ref, for reviewing contributor work together
-  in chat. Merging is always a human decision — the bot has no write path
-  to GitHub at all.
+  in chat. Read-only, no create/update/delete/merge call anywhere in that
+  path — merging is always a human decision.
+- Repo sandbox (owner-only, for now): hand Max a repo link and, once you
+  confirm, he clones it into a disposable E2B cloud sandbox — never onto the
+  machine he runs on — installs it, runs it, screenshots what's running back
+  to the channel, edits files as you direct, and pushes to GitHub when you
+  tell him to. One sandbox per channel; needs `E2B_API_KEY` and
+  `GITHUB_WRITE_TOKEN`. Costs cents per session (usage-based).
 - Document review: drop a file on a message that mentions the bot (or in
   an always-on AI channel) — text, markdown, code, PDFs, and Word docs are
   read automatically and folded into the conversation so the bot can
@@ -109,6 +115,8 @@ Create a key at [openrouter.ai/keys](https://openrouter.ai/keys) — this is `OP
    | `SECRET_KEY` | any long random string |
    | `DATABASE_PATH` | `/data/bot.db` |
    | `GITHUB_TOKEN` | *(optional)* GitHub token — raises the repo-analysis API rate limit |
+   | `E2B_API_KEY` | *(optional)* [e2b.dev](https://e2b.dev) key — enables the repo sandbox tools |
+   | `GITHUB_WRITE_TOKEN` | *(optional)* GitHub token with push access — lets the sandbox push changes |
    | `TRANSCRIPTION_API_KEY` | *(optional)* OpenAI or Groq key — enables voice monitoring |
    | `FISH_API_KEY` | *(optional)* fish.audio key — natural TTS voice for spoken replies |
    | `FISH_VOICE_ID` | *(optional)* fish.audio voice model reference id to speak with |

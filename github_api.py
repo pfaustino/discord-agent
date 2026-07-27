@@ -8,10 +8,13 @@ whole point: full visibility into what contributors have pushed, for
 review and discussion, before anything is decided.
 
 Hard rule enforced in code, not by the model: read-only. There is no
-create/update/delete/merge call anywhere in this module. Whether and when
-something gets merged is a human decision — the repo owner, or the
-contributor merging their own reviewed work — never something Max does
-himself.
+create/update/delete/merge call anywhere in this module — that stays true
+here no matter what else the bot can do elsewhere.
+
+(Max does have a separate, owner-only write path now: bot/sandbox_tools.py
+clones/runs/edits/pushes repos the owner explicitly hands him, inside a
+disposable cloud sandbox. That's a distinct mechanism from this module and
+never touches this repo's read-only introspection tools.)
 
 The same secret exclusion and redaction rules as the local repo tools
 apply here too: file reads refuse known-sensitive paths, and all textual
