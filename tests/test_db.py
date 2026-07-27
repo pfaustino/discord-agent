@@ -1,7 +1,7 @@
-"""Tests for db.py's manuscript/dictation-mode and turn-durability storage,
-run against a real (temp-file) SQLite database rather than mocks — these are
-the actual queries the live bot runs, so they need real coverage, not just
-memory.py's mocked-out call sites.
+"""Tests for db.py's manuscript and turn-durability storage, run against a
+real (temp-file) SQLite database rather than mocks — these are the actual
+queries the live bot runs, so they need real coverage, not just memory.py's
+mocked-out call sites.
 
     python -m unittest tests.test_db -v
 """
@@ -42,21 +42,6 @@ class ManuscriptTest(DbTestCase):
         await db.clear_manuscript(1, 42)
         self.assertEqual(await db.get_manuscript(1, 42), "")
 
-
-class DictationModeTest(DbTestCase):
-    async def test_defaults_to_off(self):
-        self.assertFalse(await db.is_dictation_mode(1, 42))
-
-    async def test_toggle_on_and_off(self):
-        await db.set_dictation_mode(1, 42, True)
-        self.assertTrue(await db.is_dictation_mode(1, 42))
-        await db.set_dictation_mode(1, 42, False)
-        self.assertFalse(await db.is_dictation_mode(1, 42))
-
-    async def test_is_per_member_and_per_guild(self):
-        await db.set_dictation_mode(1, 42, True)
-        self.assertFalse(await db.is_dictation_mode(1, 43))   # different member
-        self.assertFalse(await db.is_dictation_mode(2, 42))   # different guild
 
 
 class TurnDurabilityStorageTest(DbTestCase):

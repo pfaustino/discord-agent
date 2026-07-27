@@ -17,8 +17,8 @@ tools, wake pipeline, prompts, models, limitations, roadmap)
 - Roles: `/giverole` `/takerole` `/createrole` `/deleterole`
 - Channels: `/createchannel` `/deletechannel` `/settopic`
 - Utility: `/ping` `/serverinfo` `/userinfo` `/say`
-- AI: `/ask`, `/aireset`, `/dictate`, `/manuscript`, and the bot replies
-  whenever it's @mentioned
+- AI: `/ask`, `/aireset`, `/manuscript`, and the bot replies whenever
+  it's @mentioned
 - AI tools: DuckDuckGo web search, GitHub repo analysis (share a repo link
   and the bot pulls its stats, languages, and README to discuss it), and
   full read-only visibility into the bot's own GitHub repo — every branch,
@@ -51,13 +51,13 @@ tools, wake pipeline, prompts, models, limitations, roadmap)
   searchable chat log — if a redeploy hits mid-consolidation, unconsolidated
   turns are replayed on restart instead of lost, and the bot can search the
   actual log (`recall_chat_log`) whenever a summary alone doesn't have it
-- Dictation mode (owner-only): for long-form stuff meant to be kept word
-  for word — a life story, a book draft — instead of boiled down into a
-  fact or a profile field. `/dictate on:true` and everything the owner
-  says from then on (voice or text) is appended verbatim to their
-  manuscript, completely separate from durable memory and profile cards
-  and never summarized, compressed, or rewritten. `/manuscript` sends it
-  back as a text file, or clears it
+- Manuscript (owner-only, always on — no toggle, nothing to remember to
+  enable): every word the owner says, voice or text, is separately kept
+  verbatim — for long-form stuff meant to be kept word for word, like a
+  life story or a book draft, instead of boiled down into a fact or a
+  profile field. Completely separate from durable memory and profile
+  cards, never summarized, compressed, or rewritten. `/manuscript` sends
+  it back as a text file, or clears it
 - Voice monitoring (hybrid): a Node.js sidecar (`listener/`) joins occupied
   voice channels — it speaks Discord's DAVE E2EE voice protocol via
   discord.js, which Python libraries don't support yet — receives each

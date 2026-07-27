@@ -64,6 +64,14 @@ by member and/or keyword, so if a consolidation pass ever compresses,
 misses, or under-details something, the actual words said are still there
 to go back to — the AI-summarized durable memory and profile cards are a
 fast-path index into this log, not the only copy of what was said.
+
+Every turn from the bot owner, specifically, is additionally appended
+verbatim to their manuscript (db.manuscripts) — no toggle, no command,
+unconditional, all the time. This is for long-form stuff meant to be kept
+word for word rather than boiled down into a profile field or a durable
+fact: a life story, a book draft. It runs alongside, not instead of, the
+normal durable/profile consolidation above. /manuscript (bot/cogs/ai.py,
+owner-only) reads it back or clears it.
 """
 import asyncio
 import json
@@ -72,6 +80,7 @@ import re
 import time
 from collections import defaultdict, deque
 
+import config
 import db
 import openrouter
 
@@ -184,13 +193,19 @@ def record_turn(guild_id: int, speaker: str, text: str, source: str = "text",
     _trigger_consolidation(guild_id)
 
 
+def _is_owner(user_id: int) -> bool:
+    return bool(config.OWNER_ID) and user_id == config.OWNER_ID
+
+
 async def _persist_turn(guild_id: int, seq: int, speaker: str, user_id: int | None,
                         text: str, source: str, channel: str, ts: float) -> None:
     await db.add_turn(guild_id, seq, speaker, user_id, text, source, channel, ts)
-    # Dictation mode: verbatim, unsummarized capture for whoever explicitly
-    # opted in (life story, book draft, anything meant to be kept word for
-    # word rather than folded through consolidation's lossy compression).
-    if user_id is not None and await db.is_dictation_mode(guild_id, user_id):
+    # Manuscript: verbatim, unsummarized capture of everything the bot owner
+    # says — no toggle, no command, unconditional, all the time. Not a
+    # per-member feature and not opt-in; this is the owner's own long-form
+    # record (life story, book draft) that must never depend on remembering
+    # to turn something on first.
+    if user_id is not None and _is_owner(user_id):
         await db.append_manuscript(guild_id, user_id, text)
 
 

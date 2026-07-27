@@ -243,32 +243,33 @@ class TurnDurabilityTest(unittest.IsolatedAsyncioTestCase):
             added.append((guild_id, seq, speaker, text))
 
         with mock.patch.object(memory.db, "add_turn", fake_add_turn), \
-             mock.patch.object(memory.db, "is_dictation_mode", mock.AsyncMock(return_value=False)), \
              mock.patch.object(memory, "_consolidate", mock.AsyncMock()):
             memory.record_turn(1, "travis", "a lot of detailed information")
             await asyncio.sleep(0)
         self.assertEqual(added, [(1, 1, "travis", "a lot of detailed information")])
 
-    async def test_record_turn_appends_manuscript_when_dictation_mode_is_on(self):
+    async def test_record_turn_appends_manuscript_unconditionally_for_the_owner(self):
+        # No toggle, no command — every turn from the configured owner is
+        # appended verbatim, all the time.
         appended = []
 
         async def fake_append(guild_id, user_id, text):
             appended.append((guild_id, user_id, text))
 
-        with mock.patch.object(memory.db, "add_turn", mock.AsyncMock()), \
-             mock.patch.object(memory.db, "is_dictation_mode", mock.AsyncMock(return_value=True)), \
+        with mock.patch.object(memory.config, "OWNER_ID", 42), \
+             mock.patch.object(memory.db, "add_turn", mock.AsyncMock()), \
              mock.patch.object(memory.db, "append_manuscript", fake_append), \
              mock.patch.object(memory, "_consolidate", mock.AsyncMock()):
             memory.record_turn(1, "travis", "chapter one begins here", user_id=42)
             await asyncio.sleep(0)
         self.assertEqual(appended, [(1, 42, "chapter one begins here")])
 
-    async def test_record_turn_does_not_append_manuscript_when_off(self):
-        with mock.patch.object(memory.db, "add_turn", mock.AsyncMock()), \
-             mock.patch.object(memory.db, "is_dictation_mode", mock.AsyncMock(return_value=False)), \
+    async def test_record_turn_does_not_append_manuscript_for_non_owner(self):
+        with mock.patch.object(memory.config, "OWNER_ID", 42), \
+             mock.patch.object(memory.db, "add_turn", mock.AsyncMock()), \
              mock.patch.object(memory.db, "append_manuscript", mock.AsyncMock()) as fake_append, \
              mock.patch.object(memory, "_consolidate", mock.AsyncMock()):
-            memory.record_turn(1, "travis", "just chatting", user_id=42)
+            memory.record_turn(1, "someone_else", "just chatting", user_id=99)
             await asyncio.sleep(0)
         fake_append.assert_not_awaited()
 
@@ -298,6 +299,19 @@ class TurnDurabilityTest(unittest.IsolatedAsyncioTestCase):
         with mock.patch.object(memory.db, "get_pending_turn_guilds", mock.AsyncMock(return_value=[])):
             await memory.restore_pending_turns()  # must not raise
         self.assertEqual(len(memory._turns), 0)
+
+
+class IsOwnerTest(unittest.TestCase):
+    def test_matches_configured_owner_id(self):
+        with mock.patch.object(memory.config, "OWNER_ID", 42):
+            self.assertTrue(memory._is_owner(42))
+            self.assertFalse(memory._is_owner(99))
+
+    def test_unset_owner_id_matches_nobody(self):
+        # OWNER_ID defaults to 0 when unconfigured — a bare `user_id ==
+        # OWNER_ID` would wrongly treat a 0 user_id as the owner.
+        with mock.patch.object(memory.config, "OWNER_ID", 0):
+            self.assertFalse(memory._is_owner(0))
 
 
 class ProfileNotesFieldTest(unittest.IsolatedAsyncioTestCase):
