@@ -4,6 +4,7 @@ repo lookup. Exposed to OpenRouter via OpenAI-style function-calling schemas.
 import asyncio
 import logging
 import re
+import time
 
 import httpx
 
@@ -293,6 +294,13 @@ def find_repo_refs(text: str) -> list[tuple[str, str]]:
     return refs
 
 
+# Auto-attach re-fetches every repo link found in every message, and the
+# same repo commonly gets mentioned repeatedly across one conversation —
+# without a cache that burns through GitHub's rate limit for no reason.
+REPO_CACHE_TTL = 300  # seconds
+_repo_cache: dict[str, tuple[float, str]] = {}
+
+
 async def github_repo(ref: str) -> str:
     match = GITHUB_URL_RE.search(ref)
     if match:
@@ -303,6 +311,16 @@ async def github_repo(ref: str) -> str:
         return f"Can't parse repository reference: {ref!r} (expected owner/name or a github.com URL)"
     name = name.removesuffix(".git")
 
+    cache_key = f"{owner.lower()}/{name.lower()}"
+    cached = _repo_cache.get(cache_key)
+    if cached and time.monotonic() - cached[0] < REPO_CACHE_TTL:
+        return cached[1]
+    result = await _fetch_repo(owner, name)
+    _repo_cache[cache_key] = (time.monotonic(), result)
+    return result
+
+
+async def _fetch_repo(owner: str, name: str) -> str:
     headers = {"Accept": "application/vnd.github+json", "User-Agent": "discord-agent"}
     if config.GITHUB_TOKEN:
         headers["Authorization"] = f"Bearer {config.GITHUB_TOKEN}"
