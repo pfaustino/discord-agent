@@ -17,6 +17,7 @@ import base64
 import logging
 import time
 from collections import defaultdict, deque
+from types import SimpleNamespace
 
 import discord
 import httpx
@@ -30,7 +31,8 @@ import openrouter
 import tools
 import transcription
 import tts
-from bot.utils import log_action, owner_only
+from bot import agent_tools
+from bot.utils import is_owner, log_action, owner_only
 
 log = logging.getLogger("voice")
 
@@ -235,8 +237,10 @@ class Voice(commands.Cog):
         self.last_wake[channel.id] = now
 
         guild = channel.guild
+        owner = is_owner(speaker_id)
         ai_cog = self.bot.get_cog("AI")
-        base_prompt = await ai_cog.build_system_prompt(guild, speaker_id=speaker_id) if ai_cog else ""
+        base_prompt = await ai_cog.build_system_prompt(
+            guild, owner=owner, speaker_id=speaker_id) if ai_cog else ""
         system_prompt = base_prompt + VOICE_PROMPT.format(
             channel=channel.name, speaker=speaker_name
         )
@@ -245,12 +249,26 @@ class Voice(commands.Cog):
         lines = [e for e in self.transcripts[channel.id] if not e.get("system")][-CONTEXT_LINES:]
         transcript = "\n".join(f"{e['name']}: {e['text']}" for e in lines)
         model = await db.get_setting(guild.id, "ai_model")
+
+        schemas = list(tools.TOOL_SCHEMAS)
+        handler = tools.run_tool
+        if owner:
+            schemas += agent_tools.TOOL_SCHEMAS
+            fake_message = SimpleNamespace(
+                guild=guild, channel=channel,
+                author=guild.get_member(speaker_id) or discord.Object(id=speaker_id))
+
+            async def handler(name, args, _msg=fake_message):
+                if name in agent_tools.TOOLS:
+                    return await agent_tools.execute(self.bot, _msg, name, args)
+                return await tools.run_tool(name, args)
+
         try:
             reply = await openrouter.chat(
                 [{"role": "system", "content": system_prompt},
                  {"role": "user", "content": f"[voice transcript of #{channel.name}]\n{transcript}"}],
                 model=model,
-                tools=tools.TOOL_SCHEMAS, tool_handler=tools.run_tool,
+                tools=schemas, tool_handler=handler,
             )
         except openrouter.OpenRouterError as exc:
             log.warning("Wake response failed: %s", exc)
