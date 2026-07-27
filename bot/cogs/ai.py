@@ -255,20 +255,8 @@ class AI(commands.Cog):
         await interaction.response.send_message(text[:1990], ephemeral=True)
 
     @app_commands.command(description=(
-        "Toggle dictation mode: while on, everything you say (voice or text) "
-        "is appended verbatim to your manuscript — never summarized"))
-    @app_commands.describe(on="true = start capturing everything you say verbatim, false = stop")
-    @owner_only()
-    async def dictate(self, interaction: discord.Interaction, on: bool):
-        await db.set_dictation_mode(interaction.guild.id, interaction.user.id, on)
-        await interaction.response.send_message(
-            "🖋️ Dictation mode on — everything you say from here, voice or text, gets "
-            "written into your manuscript word for word. Say `/dictate on:false` to stop."
-            if on else
-            "Dictation mode off. Nothing you already dictated was touched.",
-            ephemeral=True)
-
-    @app_commands.command(description="View or clear your manuscript (your own long-form dictation)")
+        "View or clear your manuscript — every word you've ever said, kept "
+        "verbatim, no toggle needed, always on"))
     @app_commands.describe(clear="Set true to permanently erase it instead of viewing it")
     @owner_only()
     async def manuscript(self, interaction: discord.Interaction, clear: bool = False):
@@ -279,7 +267,7 @@ class AI(commands.Cog):
         content = await db.get_manuscript(interaction.guild.id, interaction.user.id)
         if not content:
             await interaction.response.send_message(
-                "No manuscript yet — turn on `/dictate` and start talking.", ephemeral=True)
+                "No manuscript yet — it fills in automatically as you talk.", ephemeral=True)
             return
         file = discord.File(io.BytesIO(content.encode("utf-8")), filename="manuscript.txt")
         await interaction.response.send_message(
