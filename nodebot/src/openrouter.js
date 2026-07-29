@@ -20,11 +20,16 @@ export class OpenRouterError extends Error {}
  * @param {(name: string, args: object) => Promise<string>} [opts.toolHandler]
  * @param {number} [opts.maxToolRounds] rounds of tool calls before the model
  *   is forced to answer without tools (default 4)
+ * @param {(toolCalls: Array) => Promise<void>} [opts.onToolCalls] awaited
+ *   once, right before the FIRST round of tool calls actually runs — lets a
+ *   caller surface "on it, doing X" feedback for a slow multi-step action
+ *   (voice.js uses this to speak a heads-up before an owner tool call
+ *   executes, same as the Python bot's on_tool_calls)
  * @returns {Promise<string>} the assistant's final reply text
  */
 export async function chat(messages, {
   model, maxTokens = 1000, temperature = 0.7, signal,
-  tools, toolHandler, maxToolRounds = 4,
+  tools, toolHandler, maxToolRounds = 4, onToolCalls,
 } = {}) {
   if (!OPENROUTER_API_KEY) throw new OpenRouterError('OPENROUTER_API_KEY is not set');
   const conversation = [...messages];
@@ -73,6 +78,10 @@ export async function chat(messages, {
     }
 
     conversation.push(reply);
+    if (onToolCalls) {
+      await onToolCalls(toolCalls);
+      onToolCalls = undefined; // only announce once, on the first round
+    }
     for (const call of toolCalls) {
       let args = {};
       try {

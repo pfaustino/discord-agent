@@ -4,7 +4,7 @@ Fresh rebuild of Max from scratch, one layer at a time. This replaces the
 Python bot (`bot/`) — not a second bot, not running alongside it. When this
 is ready, it takes over and the Python code goes away.
 
-## Current layer: connect + slash commands + text/voice AI chat + tools + persistence + moderation
+## Current layer: connect + slash commands + text/voice AI chat + tools + persistence + moderation (commands + AI-driven)
 
 - `src/index.js` — client, logs in, opens the DB, handles slash commands,
   messages, and voice state updates
@@ -36,19 +36,38 @@ is ready, it takes over and the Python code goes away.
 - `src/openrouter.js` — OpenRouter chat client with the tool-calling agent
   loop (ported from openrouter.py — the junk-verdict re-roll and spend-cap
   breaker are Python-side free-model-pool spend controls, deliberately not
-  carried over yet, this is the core loop) and abort-signal cancellation
-  (needed for voice's cancel words to actually stop an in-flight reply)
-- `src/tools.js` — AI-callable tools: `web_search` (DuckDuckGo) so far;
-  GitHub/sandbox/moderation tools follow once their own identity/write
-  pieces exist here
+  carried over yet, this is the core loop), abort-signal cancellation
+  (needed for voice's cancel words to actually stop an in-flight reply),
+  and an `onToolCalls` hook awaited once before the first round of tool
+  calls actually executes (voice.js uses it for the "on it" heads-up)
+- `src/tools.js` — general AI-callable tools: `web_search` (DuckDuckGo) so
+  far; GitHub/sandbox tools follow once their own identity/write pieces
+  exist here
+- `src/agentTools.js` — the owner's *management* tools, ported wholesale
+  from the Python bot's bot/agent_tools.py: all 25 of them (server/member/
+  role/channel lookups, kick/ban/unban/timeout/untimeout/warn/warnings/
+  clear_warnings/purge/slowmode/lock, create/delete channel, set topic,
+  send_message, give/take/create/delete role). This is what lets the owner
+  just *ask* Max to kick someone in chat or voice instead of typing
+  `/kick` — the moderation slash commands and these tools both end up
+  calling the same Discord actions and logging through the same
+  `logAction`, they're just two different front doors to the same
+  capability. Owner-only, checked both when the tool list is built (a
+  non-owner never even sees these schemas) and again inside execute()
+  (defense in depth, same as the Python bot).
 - `src/knowledge.js` — `kb_search`/`kb_list`/`kb_save`: procedural memory
   ("how to do X"), guild-scoped, backed by db.js, ported from the Python
   bot's knowledge.py — separate from tools.js because these need a guildId
   the generic tool dispatch doesn't carry, same reason the Python bot
   routes kb_* calls separately from its generic tools.run_tool
-- `src/persona.js` — the default system prompt; `ai_system_prompt` in
-  guild_settings overrides it per guild once set (no dashboard yet to set
-  it from — that's later — but `/knowledge` proves the pattern works)
+- `src/persona.js` — the default system prompt, plus `OWNER_NOTE`/
+  `MEMBER_NOTE` (ported from ai.py) telling the model whether it actually
+  has agentTools hands right now or should point a regular member at a
+  slash command instead — appended based on who's actually talking, so it
+  never claims or denies capabilities that don't match reality for this
+  speaker. `ai_system_prompt` in guild_settings overrides the base prompt
+  per guild once set (no dashboard yet to set it from — that's later — but
+  `/knowledge` proves the pattern works)
 - `src/conversation.js` — **the actual point of this rebuild**: one shared
   per-guild turn buffer, not a separate one per modality. The Python bot's
   text history (ai.py) and voice transcript (voice.py) were two different
@@ -57,8 +76,9 @@ is ready, it takes over and the Python code goes away.
   Both text and voice write into and read from this one buffer now — the
   gap is closed, not just narrowed. (Short-term/in-process, separate from
   db.js's permanent turns table — that's still a later layer.)
-- `src/textChat.js` — replies when @mentioned (with tools + knowledge
-  base), checks `ai_enabled`/`ai_model`/`ai_system_prompt` per guild,
+- `src/textChat.js` — replies when @mentioned (with web_search + knowledge
+  base always, plus the full management toolset when the speaker is the
+  owner), checks `ai_enabled`/`ai_model`/`ai_system_prompt` per guild,
   remembers every message (mentioned or not) into the shared buffer,
   tagged with which channel it happened in (`[#general]`) the same way the
   Python bot's memory does
@@ -69,14 +89,18 @@ is ready, it takes over and the Python code goes away.
 - `src/voice.js` — join/leave/rebalance is adapted directly from
   `listener/index.js`'s proven DAVE E2EE join/capture (no reason to
   rewrite working audio plumbing) — what's new is that transcription, wake
-  words, replies (with tools + knowledge base), and TTS all happen
-  in-process now instead of over an HTTP bridge to a separate Python
-  process, and read/write the same `conversation.js` buffer text chat
-  uses. Respects `quiet_mode` (leaves/won't join, drops utterances during
-  the gap before the next sweep) and per-guild wake/cancel words from
-  db.js. Wake-word cooldown, a 1s grace window + cancel words ("never
-  mind") that abort even an in-flight reply via `AbortController`, and
-  repeated-blip suppression are all ported from the Python bot's voice.py.
+  words, replies (same tool roster as text: web_search + knowledge base
+  always, management tools when the speaker is the owner), and TTS all
+  happen in-process now instead of over an HTTP bridge to a separate
+  Python process, and read/write the same `conversation.js` buffer text
+  chat uses. Respects `quiet_mode` (leaves/won't join, drops utterances
+  during the gap before the next sweep) and per-guild wake/cancel words
+  from db.js. Wake-word cooldown, a 1s grace window + cancel words ("never
+  mind") that abort even an in-flight reply via `AbortController`, repeated-
+  blip suppression, and — for the owner specifically — a spoken "on it —
+  kicking alice, then posting in #general" heads-up (`describeToolCalls`,
+  via `openrouter.js`'s new `onToolCalls` hook) before a chained action
+  actually runs, are all ported from the Python bot's voice.py.
 
 ## Run it
 
@@ -110,15 +134,24 @@ real temp-file SQLite database (settings/DEFAULTS fallback, memory version
 archiving, manuscripts, knowledge base, turns durability/permanent log,
 warnings, mod logs), knowledge.js's slugify/formatting/dispatch, WAV
 encoding correctness, voice-tag stripping, wake/cancel-word matching,
-owner-check logic (including `requireOwner`'s allow/deny branches),
-`logAction` against a real DB with fake guild/channel objects (records to
-mod_logs regardless of a log channel, posts an embed when one's configured
-and reachable, degrades quietly when it isn't), the tool-calling agent
-loop's control flow (mocked fetch), and web_search's formatting (injected
-fake search function). Moderation commands themselves aren't yet
-unit-tested end-to-end (that needs fuller Discord.js object mocking —
-member/ban/timeout calls, `interaction.deferReply`, etc.) — `requireOwner`
-and `logAction`, the two pieces every one of them shares, are.
+owner-check logic (`isOwner`/`requireOwner`/`execute` all take an
+injectable owner-id override so the allow-branch is testable without
+mutating real env state), `logAction` against a real DB with fake
+guild/channel objects (records to mod_logs regardless of a log channel,
+posts an embed when one's configured and reachable, degrades quietly when
+it isn't), agentTools.js's resolution/target-checking/registry logic
+against fake guild/member/channel objects built from real discord.js
+`Collection`s (kicking, warning with a running count, creating a
+channel/role, rejecting a bad hex color, rejecting a non-numeric unban id,
+denying a non-owner), `describeToolCalls`'s blurb generation (including
+malformed-JSON args and the empty/unrecognized-tool fallbacks), the
+tool-calling agent loop's control flow including `onToolCalls` firing
+exactly once before the first round (mocked fetch), and web_search's
+formatting (injected fake search function). Moderation *commands*
+themselves aren't yet unit-tested end-to-end (that needs fuller discord.js
+Interaction mocking — `interaction.deferReply`/`.editReply`, etc.) —
+`requireOwner` and `logAction`, the two pieces every one of them shares,
+are, and agentTools.js's equivalent actions are tested directly.
 
 A couple of things can't be exercised live from this sandbox and are
 tested via dependency injection / mocked fetch instead, noted in the test
@@ -132,14 +165,13 @@ loop's control flow, not real API reachability).
 
 ## Known gaps in this layer, on purpose
 
-- Only one non-knowledge-base AI tool so far (`web_search`) — moderation
-  actions exist now as slash commands, but not yet as AI-callable tools
-  (the owner asking Max in chat/voice to kick someone doesn't work yet,
-  only `/kick` does). GitHub read/write and sandbox tools need their own
+- No channel/role management *slash commands* yet (createchannel,
+  giverole, ...) — those actions exist as AI tools via agentTools.js
+  (owner, through chat/voice) but not as `/command`s the way moderation
+  has both. GitHub read/write and sandbox tools need their own
   identity/write layer that doesn't exist here yet. `recall_chat_log`
   (search the permanent chat log) needs the turns table wired into
   conversation.js — schema exists, wiring doesn't yet.
-- No channel/role management commands (createchannel, giverole, ...) yet.
 - Settings exist (db.js) but there's no dashboard to set most of them from
   yet, beyond what `/knowledge` and the moderation commands' `log_channel`
   setting prove out — wake/cancel words still fall back to env vars until
@@ -150,14 +182,15 @@ loop's control flow, not real API reachability).
   voice yet.
 - Single default persona unless `ai_system_prompt` is set directly in the
   DB — no per-guild dashboard UI for it yet.
-- Moderation commands aren't unit-tested end-to-end yet (see Test section
-  above) — only the shared owner-check/logging pieces are.
+- Moderation *slash commands* aren't unit-tested end-to-end yet (see Test
+  section above) — the shared owner-check/logging pieces are, and
+  agentTools.js's equivalent actions (same underlying Discord calls) are
+  tested directly.
 
 ## Next layers (pick and choose, in whatever order makes sense)
 
-- give the AI moderation/management tools (agent_tools.py's equivalent) so
-  the owner can ask Max in chat/voice to kick/ban/etc., not just `/command`
-- channel/role management commands + welcome/goodbye + automod
+- channel/role management slash commands (to match agentTools.js's
+  coverage) + welcome/goodbye + automod
 - more AI tools: GitHub read (then write), sandbox, `recall_chat_log`
 - dashboard
 

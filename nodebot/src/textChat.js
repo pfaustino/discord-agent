@@ -6,14 +6,19 @@ import { chat, OpenRouterError } from './openrouter.js';
 import { recordTurn, formatForPrompt } from './conversation.js';
 import { TOOL_SCHEMAS, runTool } from './tools.js';
 import { KB_TOOL_SCHEMAS, runTool as runKbTool } from './knowledge.js';
+import * as agentTools from './agentTools.js';
+import { MEMBER_NOTE, OWNER_NOTE } from './persona.js';
+import { isOwner } from './utils.js';
 import * as db from './db.js';
 
 const HISTORY_LIMIT = 40;
 const MAX_TOOL_ROUNDS = 4;
+const OWNER_MAX_TOOL_ROUNDS = 8;
 
-function toolHandler(guildId) {
+function toolHandler(client, message, owner) {
   return async (name, args) => {
-    if (name.startsWith('kb_')) return runKbTool(guildId, name, args);
+    if (name.startsWith('kb_')) return runKbTool(message.guild.id, name, args);
+    if (owner && name in agentTools.TOOLS) return agentTools.execute(client, message, name, args);
     return runTool(name, args);
   };
 }
@@ -23,6 +28,7 @@ export async function handleMessage(client, message) {
   const guildId = message.guild.id;
   if (!db.getSetting(guildId, 'ai_enabled')) return;
 
+  const owner = isOwner(message.author.id);
   const channelName = message.channel.name || 'unknown';
   const content = message.content.replace(`<@${client.user.id}>`, '').trim();
 
@@ -40,15 +46,20 @@ export async function handleMessage(client, message) {
 
   await message.channel.sendTyping();
   const transcript = formatForPrompt(guildId, HISTORY_LIMIT);
-  const systemPrompt = db.getSetting(guildId, 'ai_system_prompt');
+  const basePrompt = db.getSetting(guildId, 'ai_system_prompt');
+  const systemPrompt = `${basePrompt}\n\n${owner ? OWNER_NOTE : MEMBER_NOTE}`;
   const model = db.getSetting(guildId, 'ai_model');
+  const tools = owner
+    ? [...TOOL_SCHEMAS, ...KB_TOOL_SCHEMAS, ...agentTools.TOOL_SCHEMAS]
+    : [...TOOL_SCHEMAS, ...KB_TOOL_SCHEMAS];
   try {
     const reply = await chat([
       { role: 'system', content: `${systemPrompt}\n\nRecent conversation:\n${transcript}` },
       { role: 'user', content: `${message.author.username}: ${content || '(no text)'}` },
     ], {
-      model, tools: [...TOOL_SCHEMAS, ...KB_TOOL_SCHEMAS],
-      toolHandler: toolHandler(guildId), maxToolRounds: MAX_TOOL_ROUNDS,
+      model, tools,
+      toolHandler: toolHandler(client, message, owner),
+      maxToolRounds: owner ? OWNER_MAX_TOOL_ROUNDS : MAX_TOOL_ROUNDS,
     });
     recordTurn(guildId, { source: 'text', channel: channelName, speaker: client.user.username, text: reply });
     for (let i = 0; i < reply.length; i += 1990) {

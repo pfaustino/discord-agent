@@ -105,3 +105,35 @@ test('throws OpenRouterError on a non-ok response', () => withFetch(
     await assert.rejects(chat([{ role: 'user', content: 'hi' }]), OpenRouterError);
   },
 ));
+
+test('onToolCalls fires once, before the first round of tool calls runs', () => {
+  let call = 0;
+  const events = []; // records the order things happen in
+  return withFetch(
+    async () => {
+      call += 1;
+      if (call <= 2) {
+        return jsonResponse({
+          choices: [{
+            message: { tool_calls: [{ id: `c${call}`, function: { name: 'web_search', arguments: '{}' } }] },
+          }],
+        });
+      }
+      return jsonResponse({ choices: [{ message: { content: 'done' } }] });
+    },
+    async () => {
+      const reply = await chat([{ role: 'user', content: 'hi' }], {
+        tools: [{}],
+        toolHandler: async () => { events.push('tool'); return 'ok'; },
+        onToolCalls: async (toolCalls) => {
+          events.push('announce');
+          assert.equal(toolCalls.length, 1);
+        },
+        maxToolRounds: 4,
+      });
+      assert.equal(reply, 'done');
+      // announced once, before the FIRST tool ran, and never again on round 2
+      assert.deepEqual(events, ['announce', 'tool', 'tool']);
+    },
+  );
+});

@@ -17,11 +17,13 @@ import prism from 'prism-media';
 
 import { chat, OpenRouterError } from './openrouter.js';
 import { recordTurn, formatForPrompt } from './conversation.js';
-import { VOICE_PROMPT } from './persona.js';
+import { VOICE_PROMPT, VOICE_OWNER_ACTION_NOTE } from './persona.js';
 import * as transcription from './transcription.js';
 import * as tts from './tts.js';
 import { TOOL_SCHEMAS, runTool } from './tools.js';
 import { KB_TOOL_SCHEMAS, runTool as runKbTool } from './knowledge.js';
+import * as agentTools from './agentTools.js';
+import { isOwner } from './utils.js';
 import * as db from './db.js';
 
 const SILENCE_MS = 1000;                 // silence gap that ends an utterance
@@ -35,6 +37,47 @@ const REPEAT_SUPPRESS_MS = 45_000;
 const REPEAT_MAX_CHARS = 30;
 const CONTEXT_TURNS = 40;
 const MAX_TOOL_ROUNDS = 4;
+const OWNER_MAX_TOOL_ROUNDS = 8;
+
+// Short, spoken-friendly blurbs for the "on it" announcement that plays
+// before a chained action actually runs, keyed by agentTools tool name —
+// ported from the Python bot's voice.py _ACTION_BLURBS.
+const ACTION_BLURBS = {
+  kick_member: (a) => `kicking ${a.user}`,
+  ban_member: (a) => `banning ${a.user}`,
+  unban_user: (a) => `unbanning user ${a.user_id}`,
+  timeout_member: (a) => `timing out ${a.user} for ${a.minutes} minutes`,
+  untimeout_member: (a) => `removing ${a.user}'s timeout`,
+  warn_member: (a) => `warning ${a.user}`,
+  clear_warnings: (a) => `clearing ${a.user}'s warnings`,
+  purge_messages: (a) => `deleting ${a.amount} messages${a.channel ? ` in #${a.channel}` : ''}`,
+  set_slowmode: (a) => `setting slowmode to ${a.seconds}s${a.channel ? ` in #${a.channel}` : ''}`,
+  lock_channel: (a) => `${a.locked === false ? 'unlocking' : 'locking'}${a.channel ? ` #${a.channel}` : ' this channel'}`,
+  create_channel: (a) => `creating a ${a.kind || 'text'} channel called ${a.name}`,
+  delete_channel: (a) => `deleting #${a.channel}`,
+  set_channel_topic: (a) => `updating the topic${a.channel ? ` for #${a.channel}` : ''}`,
+  send_message: (a) => `posting that${a.channel ? ` in #${a.channel}` : ''}`,
+  give_role: (a) => `giving ${a.user} the ${a.role} role`,
+  take_role: (a) => `removing the ${a.role} role from ${a.user}`,
+  create_role: (a) => `creating the ${a.name} role`,
+  delete_role: (a) => `deleting the ${a.role} role`,
+};
+
+/** Turn raw OpenRouter tool_calls into one short, speakable "on it" line,
+ * so the owner hears what's about to happen before it happens, not just
+ * the after-the-fact result. */
+export function describeToolCalls(toolCalls) {
+  const parts = toolCalls.map((call) => {
+    let args = {};
+    try {
+      args = JSON.parse(call.function?.arguments || '{}');
+    } catch { /* malformed args from the model — fall through to generic */ }
+    const blurb = ACTION_BLURBS[call.function?.name];
+    return blurb ? blurb(args) : 'handling that';
+  });
+  if (!parts.length) return 'on it, one sec.';
+  return `on it — ${parts.join(', then ')}.`;
+}
 
 const activeStreams = new Set();     // "guildId:userId" with a live subscription
 const players = new Map();           // guildId -> AudioPlayer
@@ -293,10 +336,39 @@ async function respond(channel, speakerName, speakerId, state) {
   lastWake.set(channel.id, now);
 
   const guild = channel.guild;
+  const owner = isOwner(speakerId);
   const basePrompt = db.getSetting(guild.id, 'ai_system_prompt');
   const model = db.getSetting(guild.id, 'ai_model');
-  const systemPrompt = basePrompt + VOICE_PROMPT({ channel: channel.name, speaker: speakerName });
+  let systemPrompt = basePrompt + VOICE_PROMPT({ channel: channel.name, speaker: speakerName });
+  if (owner) systemPrompt += VOICE_OWNER_ACTION_NOTE;
   const transcript = formatForPrompt(guild.id, CONTEXT_TURNS);
+
+  // message.author on a real discord.js Message is a User, not a
+  // GuildMember — match that shape so agentTools' actor()/checks behave
+  // the same here as they do from text chat.
+  const fakeMessage = {
+    guild, channel,
+    author: guild.members.cache.get(speakerId)?.user
+      || { id: speakerId, tag: speakerName, username: speakerName },
+  };
+  const tools = owner
+    ? [...TOOL_SCHEMAS, ...KB_TOOL_SCHEMAS, ...agentTools.TOOL_SCHEMAS]
+    : [...TOOL_SCHEMAS, ...KB_TOOL_SCHEMAS];
+  const toolHandler = async (name, args) => {
+    if (name.startsWith('kb_')) return runKbTool(guild.id, name, args);
+    if (owner && name in agentTools.TOOLS) return agentTools.execute(null, fakeMessage, name, args);
+    return runTool(name, args);
+  };
+  const onToolCalls = owner ? async (toolCalls) => {
+    const blurb = describeToolCalls(toolCalls);
+    recordTurn(guild.id, { source: 'voice', channel: channel.name, speaker: 'Max', text: blurb });
+    try {
+      await channel.send(blurb);
+    } catch (err) {
+      console.warn('[voice] "on it" announcement post failed:', err.message);
+    }
+    await speakInVoice(guild, blurb);
+  } : undefined;
 
   state.controller = new AbortController();
   let reply;
@@ -307,11 +379,8 @@ async function respond(channel, speakerName, speakerId, state) {
     ], {
       model,
       signal: state.controller.signal,
-      tools: [...TOOL_SCHEMAS, ...KB_TOOL_SCHEMAS],
-      toolHandler: async (name, args) => (
-        name.startsWith('kb_') ? runKbTool(guild.id, name, args) : runTool(name, args)
-      ),
-      maxToolRounds: MAX_TOOL_ROUNDS,
+      tools, toolHandler, onToolCalls,
+      maxToolRounds: owner ? OWNER_MAX_TOOL_ROUNDS : MAX_TOOL_ROUNDS,
     });
   } catch (err) {
     if (state.cancelled) return; // aborted by a cancel word — expected
