@@ -2,19 +2,19 @@ import { Client, Events, GatewayIntentBits, Partials } from 'discord.js';
 import { DISCORD_TOKEN } from './config.js';
 import { loadCommands } from './load-commands.js';
 import { handleMessage } from './textChat.js';
+import * as voice from './voice.js';
 
 if (!DISCORD_TOKEN) {
   console.error('DISCORD_TOKEN is required (see .env.example)');
   process.exit(1);
 }
 
-// Layer 2 adds MessageContent/GuildMessages for text chat. Voice intents
-// (GuildVoiceStates etc.) get added when that layer lands.
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
+    GatewayIntentBits.GuildVoiceStates,
   ],
   partials: [Partials.Channel],
 });
@@ -22,6 +22,7 @@ client.commands = await loadCommands();
 
 client.once(Events.ClientReady, (c) => {
   console.log(`Logged in as ${c.user.tag} (${c.user.id}) — ${c.guilds.cache.size} guild(s)`);
+  voice.init(c);
 });
 
 client.on(Events.InteractionCreate, async (interaction) => {
@@ -45,6 +46,8 @@ client.on(Events.MessageCreate, async (message) => {
     console.error('message handling failed:', err);
   }
 });
+
+client.on(Events.VoiceStateUpdate, voice.handleVoiceStateUpdate);
 
 process.on('unhandledRejection', (err) => console.error('unhandled rejection:', err));
 

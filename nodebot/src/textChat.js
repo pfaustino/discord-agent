@@ -4,15 +4,9 @@
 // about each other, not anything specific to this file.
 import { chat, OpenRouterError } from './openrouter.js';
 import { recordTurn, formatForPrompt } from './conversation.js';
+import { SYSTEM_PROMPT } from './persona.js';
 
 const HISTORY_LIMIT = 40;
-
-// Placeholder persona — the real one will be per-guild and dashboard-
-// configurable (db.py's ai_system_prompt/ai_capability_prompt), ported
-// once there's a persistence layer here to hold it.
-const SYSTEM_PROMPT = (
-  "You're Max, a Discord server assistant. Keep replies short and direct."
-);
 
 export async function handleMessage(client, message) {
   if (message.author.bot || !message.guild) return;

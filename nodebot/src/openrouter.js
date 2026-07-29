@@ -7,10 +7,11 @@ const API_URL = 'https://openrouter.ai/api/v1/chat/completions';
 
 export class OpenRouterError extends Error {}
 
-export async function chat(messages, { model, maxTokens = 1000, temperature = 0.7 } = {}) {
+export async function chat(messages, { model, maxTokens = 1000, temperature = 0.7, signal } = {}) {
   if (!OPENROUTER_API_KEY) throw new OpenRouterError('OPENROUTER_API_KEY is not set');
   const resp = await fetch(API_URL, {
     method: 'POST',
+    signal,
     headers: {
       Authorization: `Bearer ${OPENROUTER_API_KEY}`,
       'Content-Type': 'application/json',

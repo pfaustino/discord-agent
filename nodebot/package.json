@@ -9,10 +9,17 @@
   },
   "scripts": {
     "start": "node src/index.js",
-    "deploy-commands": "node src/deploy-commands.js"
+    "deploy-commands": "node src/deploy-commands.js",
+    "test": "node --test"
   },
   "dependencies": {
+    "@discordjs/opus": "^0.10.0",
+    "@discordjs/voice": "^0.19.2",
+    "@snazzah/davey": "^0.1.12",
     "discord.js": "^14.27.0",
-    "dotenv": "^16.4.5"
+    "dotenv": "^16.4.5",
+    "msedge-tts": "^2.0.7",
+    "prism-media": "^1.3.5",
+    "sodium-native": "^5.1.0"
   }
 }
