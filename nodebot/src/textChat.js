@@ -5,8 +5,10 @@
 import { chat, OpenRouterError } from './openrouter.js';
 import { recordTurn, formatForPrompt } from './conversation.js';
 import { SYSTEM_PROMPT } from './persona.js';
+import { TOOL_SCHEMAS, runTool } from './tools.js';
 
 const HISTORY_LIMIT = 40;
+const MAX_TOOL_ROUNDS = 4;
 
 export async function handleMessage(client, message) {
   if (message.author.bot || !message.guild) return;
@@ -32,7 +34,7 @@ export async function handleMessage(client, message) {
     const reply = await chat([
       { role: 'system', content: `${SYSTEM_PROMPT}\n\nRecent conversation:\n${transcript}` },
       { role: 'user', content: `${message.author.username}: ${content || '(no text)'}` },
-    ]);
+    ], { tools: TOOL_SCHEMAS, toolHandler: runTool, maxToolRounds: MAX_TOOL_ROUNDS });
     recordTurn(guildId, { source: 'text', channel: channelName, speaker: client.user.username, text: reply });
     for (let i = 0; i < reply.length; i += 1990) {
       await message.reply({ content: reply.slice(i, i + 1990), allowedMentions: { repliedUser: false } });

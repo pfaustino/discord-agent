@@ -21,6 +21,7 @@ import { recordTurn, formatForPrompt } from './conversation.js';
 import { SYSTEM_PROMPT, VOICE_PROMPT } from './persona.js';
 import * as transcription from './transcription.js';
 import * as tts from './tts.js';
+import { TOOL_SCHEMAS, runTool } from './tools.js';
 
 const SILENCE_MS = 1000;                 // silence gap that ends an utterance
 const MIN_UTTERANCE_SEC = 1.5;            // shorter blips are the noise gate, not speech
@@ -32,6 +33,7 @@ const WAKE_GRACE_MS = 1_000;              // window for an instant "never mind"
 const REPEAT_SUPPRESS_MS = 45_000;
 const REPEAT_MAX_CHARS = 30;
 const CONTEXT_TURNS = 40;
+const MAX_TOOL_ROUNDS = 4;
 
 const activeStreams = new Set();     // "guildId:userId" with a live subscription
 const players = new Map();           // guildId -> AudioPlayer
@@ -288,7 +290,10 @@ async function respond(channel, speakerName, speakerId, state) {
     reply = await chat([
       { role: 'system', content: systemPrompt },
       { role: 'user', content: `[voice transcript of #${channel.name}]\n${transcript}` },
-    ], { signal: state.controller.signal });
+    ], {
+      signal: state.controller.signal,
+      tools: TOOL_SCHEMAS, toolHandler: runTool, maxToolRounds: MAX_TOOL_ROUNDS,
+    });
   } catch (err) {
     if (state.cancelled) return; // aborted by a cancel word — expected
     if (err instanceof OpenRouterError) {
