@@ -122,6 +122,10 @@ textarea { resize: vertical; min-height: 70px; }
 input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); }
 label.field { display: block; margin-bottom: 12px; }
 label.field .lbl { display: block; font-size: 13px; color: var(--muted); margin-bottom: 5px; }
+.lbl-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 5px; }
+.lbl-row .lbl { margin-bottom: 0; }
+.enhance-btn { flex-shrink: 0; white-space: nowrap; }
+.enhance-btn:disabled { opacity: .6; cursor: default; }
 label.toggle { display: flex; align-items: center; gap: 10px; padding: 8px 0; cursor: pointer; }
 label.toggle input { width: auto; accent-color: var(--accent); transform: scale(1.3); }
 

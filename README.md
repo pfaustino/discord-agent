@@ -5,7 +5,9 @@ dashboard and AI chat powered by OpenRouter. Designed to deploy on Railway from 
 as a single service (bot + dashboard in one process).
 
 Docs: [overview](docs/overview.md) · [architecture](docs/architecture.md) ·
-[voice pipeline](docs/voice-pipeline.md) · [operations](docs/operations.md)
+[voice pipeline](docs/voice-pipeline.md) · [operations](docs/operations.md) ·
+[how Max thinks](docs/how-max-thinks.md) (concepts: pressure, memory,
+tools, wake pipeline, prompts, models, limitations, roadmap)
 
 ## Features
 
@@ -15,9 +17,25 @@ Docs: [overview](docs/overview.md) · [architecture](docs/architecture.md) ·
 - Roles: `/giverole` `/takerole` `/createrole` `/deleterole`
 - Channels: `/createchannel` `/deletechannel` `/settopic`
 - Utility: `/ping` `/serverinfo` `/userinfo` `/say`
-- AI: `/ask`, `/aireset`, and the bot replies whenever it's @mentioned
-- AI tools: DuckDuckGo web search, plus GitHub repo analysis (share a repo
-  link and the bot pulls its stats, languages, and README to discuss it)
+- AI: `/ask`, `/aireset`, `/manuscript`, `/knowledge`, and the bot replies
+  whenever it's @mentioned
+- AI tools: DuckDuckGo web search, GitHub repo analysis (share a repo link
+  and the bot pulls its stats, languages, and README to discuss it), and
+  full read-only visibility into the bot's own GitHub repo — every branch,
+  contributor pull requests with full diffs, branch comparisons, commits,
+  and file contents at any ref, for reviewing contributor work together
+  in chat. Read-only, no create/update/delete/merge call anywhere in that
+  path — merging is always a human decision.
+- Repo sandbox (owner-only, for now): hand Max a repo link and, once you
+  confirm, he clones it into a disposable E2B cloud sandbox — never onto the
+  machine he runs on — installs it, runs it, screenshots what's running back
+  to the channel, edits files as you direct, and pushes to GitHub when you
+  tell him to. One sandbox per channel; needs `E2B_API_KEY` and
+  `GITHUB_WRITE_TOKEN`. Costs cents per session (usage-based).
+- Document review: drop a file on a message that mentions the bot (or in
+  an always-on AI channel) — text, markdown, code, PDFs, and Word docs are
+  read automatically and folded into the conversation so the bot can
+  summarize, answer questions about, or review what's in them.
 - Proactive speech: a pressure engine (`pressure/`, adapted from
   digital-pressure) lets the bot speak unprompted — messages and voice
   transcripts are classified into weighted signals (blockers, wrong claims,
@@ -25,11 +43,35 @@ Docs: [overview](docs/overview.md) · [architecture](docs/architecture.md) ·
   flows, and a deterministic gate (thresholds, relevance, novelty,
   cooldowns, budgets, energy) rules on every drafted contribution —
   `/pressure` shows state or toggles it (owner)
-- Persistent two-tier memory: a working-memory file (current topic, open
-  questions, recent meaningful turns; refreshed every 5 turns) rolls into a
-  durable-memory file (dated facts/preferences/decisions with confidence)
-  every ~45 turns — fed by text chat and voice alike, stored versioned in
-  SQLite, injected into every reply; `/memory` shows or wipes it (owner)
+- Persistent memory, updated live: a working-memory file (current topic,
+  open questions, recent meaningful turns), a durable-memory file (dated
+  facts/preferences/decisions with confidence), and a per-member profile
+  card (goals, active projects, constraints, vibe notes, freeform notes)
+  are all rewritten after every single turn — text or voice, from anyone,
+  in every channel, tagged with exactly where it happened (`#general`,
+  `voice/General`, ...) — so something posted in one channel can be
+  recalled later from a completely different channel or from voice, no
+  batching delay; stored versioned in SQLite, injected into every reply;
+  `/memory` shows or wipes it (owner). Every raw turn is also persisted
+  immediately (before consolidation runs) and kept forever as a permanent,
+  searchable chat log — if a redeploy hits mid-consolidation, unconsolidated
+  turns are replayed on restart instead of lost, and the bot can search the
+  actual log (`recall_chat_log`) whenever a summary alone doesn't have it
+- Manuscript (owner-only, always on — no toggle, nothing to remember to
+  enable): every word the owner says, voice or text, is separately kept
+  verbatim — for long-form stuff meant to be kept word for word, like a
+  life story or a book draft, instead of boiled down into a fact or a
+  profile field. Completely separate from durable memory and profile
+  cards, never summarized, compressed, or rewritten. `/manuscript` sends
+  it back as a text file, or clears it
+- Knowledge base: procedural memory, separate from durable/working/profile
+  memory (which is facts about people) — reusable "how to do X" steps.
+  Before improvising an unfamiliar multi-step task, or asking how to do
+  something, the bot checks it first (`kb_search`); if nothing matches, it
+  asks instead of guessing, then saves the resolved procedure (`kb_save`)
+  so nobody has to walk it through the same thing twice. Guild-wide, not
+  tied to one person; `/knowledge` lists or searches it, and the owner can
+  delete an entry
 - Voice monitoring (hybrid): a Node.js sidecar (`listener/`) joins occupied
   voice channels — it speaks Discord's DAVE E2EE voice protocol via
   discord.js, which Python libraries don't support yet — receives each
@@ -81,6 +123,8 @@ Create a key at [openrouter.ai/keys](https://openrouter.ai/keys) — this is `OP
    | `SECRET_KEY` | any long random string |
    | `DATABASE_PATH` | `/data/bot.db` |
    | `GITHUB_TOKEN` | *(optional)* GitHub token — raises the repo-analysis API rate limit |
+   | `E2B_API_KEY` | *(optional)* [e2b.dev](https://e2b.dev) key — enables the repo sandbox tools |
+   | `GITHUB_WRITE_TOKEN` | *(optional)* GitHub token with push access — lets the sandbox push changes |
    | `TRANSCRIPTION_API_KEY` | *(optional)* OpenAI or Groq key — enables voice monitoring |
    | `FISH_API_KEY` | *(optional)* fish.audio key — natural TTS voice for spoken replies |
    | `FISH_VOICE_ID` | *(optional)* fish.audio voice model reference id to speak with |

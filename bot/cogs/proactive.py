@@ -240,7 +240,8 @@ class Proactive(commands.Cog):
             for s in engine.store.signals("active")
             if s.topic == cand["topic"] and s.strength(now) > 0) or "(none)"
         ai_cog = self.bot.get_cog("AI")
-        system = await ai_cog.build_system_prompt(guild) if ai_cog else ""
+        speaker_id = int(cand["user_id"]) if str(cand.get("user_id", "")).isdigit() else None
+        system = await ai_cog.build_system_prompt(guild, speaker_id=speaker_id) if ai_cog else ""
         is_voice = isinstance(channel, discord.VoiceChannel)
         if is_voice and tts.fish_enabled():
             system += (voice_mod.FISH_S2_TAG_PROMPT if tts.is_s2()
