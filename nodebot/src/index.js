@@ -1,15 +1,23 @@
-import { Client, Events, GatewayIntentBits } from 'discord.js';
+import { Client, Events, GatewayIntentBits, Partials } from 'discord.js';
 import { DISCORD_TOKEN } from './config.js';
 import { loadCommands } from './load-commands.js';
+import { handleMessage } from './textChat.js';
 
 if (!DISCORD_TOKEN) {
   console.error('DISCORD_TOKEN is required (see .env.example)');
   process.exit(1);
 }
 
-// Layer 1: just enough to connect and answer a slash command. More intents
-// get added as later layers need them (message content, members, voice).
-const client = new Client({ intents: [GatewayIntentBits.Guilds] });
+// Layer 2 adds MessageContent/GuildMessages for text chat. Voice intents
+// (GuildVoiceStates etc.) get added when that layer lands.
+const client = new Client({
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent,
+  ],
+  partials: [Partials.Channel],
+});
 client.commands = await loadCommands();
 
 client.once(Events.ClientReady, (c) => {
@@ -27,6 +35,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
     const reply = { content: 'Something went wrong running that command.', ephemeral: true };
     if (interaction.replied || interaction.deferred) await interaction.followUp(reply);
     else await interaction.reply(reply);
+  }
+});
+
+client.on(Events.MessageCreate, async (message) => {
+  try {
+    await handleMessage(client, message);
+  } catch (err) {
+    console.error('message handling failed:', err);
   }
 });
 
