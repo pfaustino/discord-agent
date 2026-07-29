@@ -41,17 +41,65 @@ export function stripVoiceTags(text) {
   return text.replace(TAG_RE, '').replace(S2_TAG_RE, '').trim();
 }
 
+// Per-request text budget for each backend. A longer reply is split at
+// sentence boundaries and synthesized piece by piece, then the MP3s are
+// concatenated — MP3 is a stream of self-contained frames, so joining the
+// bytes plays back as one continuous clip. That keeps the single-blob
+// contract speakInVoice() expects while letting a multi-paragraph reply be
+// spoken in full; both backends used to hard-slice and drop the remainder.
+const FISH_CHUNK = 1500;
+const EDGE_CHUNK = 700;
+// Ceiling on synthesis calls per reply, so a runaway answer can't fan out
+// into dozens of API requests. Hitting it is logged, never silent.
+const MAX_CHUNKS = 8;
+
+/** Split text into <=limit pieces, preferring sentence/paragraph breaks. */
+export function splitForTts(text, limit) {
+  const pieces = String(text).split(/(?<=[.!?])\s+|\n+/).filter((p) => p.trim());
+  const chunks = [];
+  let cur = '';
+  for (let piece of pieces) {
+    // A single sentence longer than the budget still has to be broken up.
+    while (piece.length > limit) {
+      if (cur) { chunks.push(cur); cur = ''; }
+      chunks.push(piece.slice(0, limit));
+      piece = piece.slice(limit);
+    }
+    if (!cur) cur = piece;
+    else if (cur.length + 1 + piece.length <= limit) cur += ` ${piece}`;
+    else { chunks.push(cur); cur = piece; }
+  }
+  if (cur.trim()) chunks.push(cur);
+  return chunks;
+}
+
+async function synthesizeWith(text, limit, backend, label) {
+  let chunks = splitForTts(text, limit);
+  if (!chunks.length) return null;
+  if (chunks.length > MAX_CHUNKS) {
+    console.warn(`[tts] reply needs ${chunks.length} ${label} chunks — speaking the first ${MAX_CHUNKS}`);
+    chunks = chunks.slice(0, MAX_CHUNKS);
+  }
+  const parts = [];
+  for (const chunk of chunks) {
+    const audio = await backend(chunk);
+    if (!audio) return null; // fall through to the next backend for the whole reply
+    parts.push(audio);
+  }
+  return Buffer.concat(parts);
+}
+
 /** Returns audio bytes (Buffer) for text, or null if no TTS backend works. */
 export async function synthesize(text) {
   if (fishEnabled()) {
-    const audio = await fish(text);
+    const audio = await synthesizeWith(text, FISH_CHUNK, fish, 'Fish');
     if (audio) return audio;
   }
-  return edge(stripVoiceTags(text));
+  return synthesizeWith(stripVoiceTags(text), EDGE_CHUNK, edge, 'edge');
 }
 
 async function fish(text) {
-  const payload = { text: text.slice(0, 2000), format: 'mp3', latency: 'normal' };
+  const payload = { text, format: 'mp3', latency: 'normal' };
   if (FISH_VOICE_ID) payload.reference_id = FISH_VOICE_ID;
   let resp;
   try {
@@ -80,7 +128,7 @@ async function edge(text) {
   try {
     const tts = new MsEdgeTTS();
     await tts.setMetadata('en-US-GuyNeural', OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
-    const { audioStream } = tts.toStream(text.slice(0, 800));
+    const { audioStream } = tts.toStream(text);
     const chunks = [];
     for await (const chunk of audioStream) chunks.push(chunk);
     const buf = Buffer.concat(chunks);
