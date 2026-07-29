@@ -51,3 +51,14 @@ export async function logAction(guild, action, actor, target = null, reason = nu
     console.warn('[utils] logAction post failed:', err.message);
   }
 }
+
+/** Fill {user}, {server}, {membercount} placeholders in welcome/goodbye
+ * templates. Ported from bot/utils.py's format_template. `member` needs a
+ * mention-form toString() (real discord.js GuildMember/User both have
+ * one — it delegates to `<@id>`), plus .guild.name/.guild.memberCount. */
+export function formatTemplate(template, member) {
+  return template
+    .replaceAll('{user}', String(member))
+    .replaceAll('{server}', member.guild.name)
+    .replaceAll('{membercount}', String(member.guild.memberCount));
+}

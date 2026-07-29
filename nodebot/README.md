@@ -4,7 +4,7 @@ Fresh rebuild of Max from scratch, one layer at a time. This replaces the
 Python bot (`bot/`) — not a second bot, not running alongside it. When this
 is ready, it takes over and the Python code goes away.
 
-## Current layer: connect + slash commands + text/voice AI chat + tools + persistence + moderation (commands + AI-driven)
+## Current layer: connect + slash commands + text/voice AI chat + tools + persistence + moderation + welcome/autorole + automod
 
 - `src/index.js` — client, logs in, opens the DB, handles slash commands,
   messages, and voice state updates
@@ -20,6 +20,10 @@ is ready, it takes over and the Python code goes away.
   an embed to the configured log channel, same as bot/utils.py's
   log_action) — the first thing to actually exercise db.js's
   warnings/mod_logs tables
+- `src/commands/createchannel.js` `deletechannel.js` `settopic.js`
+  `giverole.js` `takerole.js` `createrole.js` `deleterole.js`
+  `testwelcome.js` — ported from channels.py/roles.py/welcome.py, same
+  owner-only + logAction pattern as the moderation commands
 - `src/load-commands.js` — drops a new file in `src/commands/` to add a
   command, nothing else to wire up
 - `src/deploy-commands.js` — registers commands with Discord
@@ -101,6 +105,22 @@ is ready, it takes over and the Python code goes away.
   kicking alice, then posting in #general" heads-up (`describeToolCalls`,
   via `openrouter.js`'s new `onToolCalls` hook) before a chained action
   actually runs, are all ported from the Python bot's voice.py.
+- `src/welcome.js` — `handleMemberAdd`/`handleMemberRemove`, wired to
+  `GuildMemberAdd`/`GuildMemberRemove` in index.js: applies the `autorole`
+  setting and posts the `welcome_message`/`goodbye_message` template
+  (`{user}`/`{server}`/`{membercount}`, via `utils.js`'s new
+  `formatTemplate`) to the configured `welcome_channel`. Ported from
+  bot/cogs/welcome.py. Needs the `GuildMembers` privileged intent — also
+  enable Server Members Intent in the Discord Developer Portal, same as
+  the Python bot requires.
+- `src/automod.js` — banned words, invite-link blocking, mention-spam
+  limits (`automod_enabled`/`banned_words`/`block_invites`/`max_mentions`
+  settings), ported from bot/cogs/automod.py. Runs independently of
+  textChat.js on every message (index.js calls both for the same
+  MessageCreate event, same as the Python bot's separate AutoMod/AI cogs
+  both getting on_message) — a member with Manage Messages is exempt, and
+  a caught violation gets deleted, logged via `logAction`, and gets a
+  short-lived warning reply in the channel.
 
 ## Run it
 
@@ -146,12 +166,19 @@ channel/role, rejecting a bad hex color, rejecting a non-numeric unban id,
 denying a non-owner), `describeToolCalls`'s blurb generation (including
 malformed-JSON args and the empty/unrecognized-tool fallbacks), the
 tool-calling agent loop's control flow including `onToolCalls` firing
-exactly once before the first round (mocked fetch), and web_search's
-formatting (injected fake search function). Moderation *commands*
-themselves aren't yet unit-tested end-to-end (that needs fuller discord.js
+exactly once before the first round (mocked fetch), web_search's
+formatting (injected fake search function), automod.js's `findViolation`
+(banned words / invite links / mention spam, priority order, the disabled
+case) and `checkMessage` against fake message objects (skips bots/DMs,
+skips Manage Messages holders, deletes+logs a real violation), and
+welcome.js's member-add/-remove handlers (`formatTemplate` filling all
+three placeholders, autorole application, "nothing configured" no-ops).
+Slash *commands* themselves (moderation, channel/role, testwelcome)
+aren't yet unit-tested end-to-end (that needs fuller discord.js
 Interaction mocking — `interaction.deferReply`/`.editReply`, etc.) —
-`requireOwner` and `logAction`, the two pieces every one of them shares,
-are, and agentTools.js's equivalent actions are tested directly.
+`requireOwner` and `logAction`, the pieces every one of them shares, are,
+and agentTools.js's equivalent actions (same underlying Discord calls,
+same log entries) are tested directly.
 
 A couple of things can't be exercised live from this sandbox and are
 tested via dependency injection / mocked fetch instead, noted in the test
@@ -165,32 +192,24 @@ loop's control flow, not real API reachability).
 
 ## Known gaps in this layer, on purpose
 
-- No channel/role management *slash commands* yet (createchannel,
-  giverole, ...) — those actions exist as AI tools via agentTools.js
-  (owner, through chat/voice) but not as `/command`s the way moderation
-  has both. GitHub read/write and sandbox tools need their own
-  identity/write layer that doesn't exist here yet. `recall_chat_log`
-  (search the permanent chat log) needs the turns table wired into
-  conversation.js — schema exists, wiring doesn't yet.
+- GitHub read/write and sandbox tools need their own identity/write layer
+  that doesn't exist here yet. `recall_chat_log` (search the permanent
+  chat log) needs the turns table wired into conversation.js — schema
+  exists, wiring doesn't yet.
 - Settings exist (db.js) but there's no dashboard to set most of them from
-  yet, beyond what `/knowledge` and the moderation commands' `log_channel`
-  setting prove out — wake/cancel words still fall back to env vars until
-  a guild has its own row.
-- No welcome/goodbye messages, autorole, or automod (banned words, invite
-  blocking, mention spam) yet.
-- No banned-word flagging or de-escalation/pressure (proactive speech) in
-  voice yet.
+  yet, beyond what `/knowledge`, the moderation commands' `log_channel`
+  setting, and welcome/autorole/automod's settings prove out — wake/cancel
+  words still fall back to env vars until a guild has its own row.
+- No de-escalation/pressure (proactive speech) in voice yet.
 - Single default persona unless `ai_system_prompt` is set directly in the
   DB — no per-guild dashboard UI for it yet.
-- Moderation *slash commands* aren't unit-tested end-to-end yet (see Test
-  section above) — the shared owner-check/logging pieces are, and
-  agentTools.js's equivalent actions (same underlying Discord calls) are
-  tested directly.
+- Slash commands (moderation, channel/role, testwelcome) aren't
+  unit-tested end-to-end yet (see Test section above) — the shared
+  owner-check/logging pieces are, and agentTools.js's equivalent actions
+  are tested directly.
 
 ## Next layers (pick and choose, in whatever order makes sense)
 
-- channel/role management slash commands (to match agentTools.js's
-  coverage) + welcome/goodbye + automod
 - more AI tools: GitHub read (then write), sandbox, `recall_chat_log`
 - dashboard
 

@@ -106,6 +106,16 @@ export const DEFAULTS = {
   voice_cancel_words: VOICE_CANCEL_WORDS,
   quiet_mode: false,
   log_channel: null,
+  // welcome / goodbye / autorole
+  welcome_channel: null,
+  welcome_message: 'Welcome {user} to {server}! You are member #{membercount}.',
+  goodbye_message: '{user} has left {server}.',
+  autorole: null,
+  // automod
+  automod_enabled: false,
+  banned_words: [],
+  block_invites: false,
+  max_mentions: 0,
 };
 
 let db = null;

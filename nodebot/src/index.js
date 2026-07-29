@@ -3,6 +3,8 @@ import { DISCORD_TOKEN, DATABASE_PATH } from './config.js';
 import { loadCommands } from './load-commands.js';
 import { handleMessage } from './textChat.js';
 import * as voice from './voice.js';
+import * as automod from './automod.js';
+import * as welcome from './welcome.js';
 import * as db from './db.js';
 
 if (!DISCORD_TOKEN) {
@@ -13,12 +15,16 @@ if (!DISCORD_TOKEN) {
 db.initDb(DATABASE_PATH);
 process.on('exit', () => db.closeDb());
 
+// GuildMembers is a privileged intent — must also be enabled in the
+// Discord Developer Portal (Bot tab → Privileged Gateway Intents), same
+// as the Python bot requires.
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
     GatewayIntentBits.GuildVoiceStates,
+    GatewayIntentBits.GuildMembers,
   ],
   partials: [Partials.Channel],
 });
@@ -44,10 +50,34 @@ client.on(Events.InteractionCreate, async (interaction) => {
 });
 
 client.on(Events.MessageCreate, async (message) => {
+  // Both run independently for every message, same as the Python bot's
+  // separate AutoMod/AI cogs both getting on_message — automod deleting
+  // the message doesn't stop the AI side from having already seen it.
+  try {
+    await automod.checkMessage(message);
+  } catch (err) {
+    console.error('automod check failed:', err);
+  }
   try {
     await handleMessage(client, message);
   } catch (err) {
     console.error('message handling failed:', err);
+  }
+});
+
+client.on(Events.GuildMemberAdd, async (member) => {
+  try {
+    await welcome.handleMemberAdd(member);
+  } catch (err) {
+    console.error('welcome (member add) failed:', err);
+  }
+});
+
+client.on(Events.GuildMemberRemove, async (member) => {
+  try {
+    await welcome.handleMemberRemove(member);
+  } catch (err) {
+    console.error('welcome (member remove) failed:', err);
   }
 });
 
