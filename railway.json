@@ -4,7 +4,7 @@
     "builder": "NIXPACKS"
   },
   "deploy": {
-    "startCommand": "node nodebot/src/index.js",
+    "startCommand": "node nodebot/src/deploy-commands.js || echo 'slash-command registration skipped — bot still starting'; exec node nodebot/src/index.js",
     "restartPolicyType": "ON_FAILURE",
     "restartPolicyMaxRetries": 10
   }

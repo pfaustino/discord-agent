@@ -16,5 +16,9 @@ aptPkgs = ["ffmpeg"]
 [phases.install]
 cmds = ["cd nodebot && npm ci --omit=dev"]
 
+# Register slash commands, then hand the process over to the bot. The `||`
+# keeps registration non-fatal: a Discord API hiccup or a missing CLIENT_ID
+# must not stop Max from coming up. `exec` replaces the shell so the bot is
+# PID 1 and receives Railway's shutdown signals directly.
 [start]
-cmd = "node nodebot/src/index.js"
+cmd = "node nodebot/src/deploy-commands.js || echo 'slash-command registration skipped — bot still starting'; exec node nodebot/src/index.js"

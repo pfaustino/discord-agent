@@ -106,6 +106,84 @@ test('throws OpenRouterError on a non-ok response', () => withFetch(
   },
 ));
 
+test('background work defaults to the cheap utility model', () => {
+  const models = [];
+  return withFetch(
+    async (_url, opts) => {
+      models.push(JSON.parse(opts.body).model);
+      return jsonResponse({ choices: [{ message: { content: 'ok' } }] });
+    },
+    async () => {
+      await chat([{ role: 'user', content: 'hi' }], { background: true });
+      await chat([{ role: 'user', content: 'hi' }]);
+      // config.js defaults: utility = openrouter/free, conversational =
+      // anthropic/claude-3.5-haiku. Background must not use the expensive one.
+      assert.equal(models[0], 'openrouter/free');
+      assert.notEqual(models[1], 'openrouter/free');
+    },
+  );
+});
+
+test('an explicit model still wins over the background default', () => {
+  const models = [];
+  return withFetch(
+    async (_url, opts) => {
+      models.push(JSON.parse(opts.body).model);
+      return jsonResponse({ choices: [{ message: { content: 'ok' } }] });
+    },
+    async () => {
+      await chat([{ role: 'user', content: 'hi' }], { background: true, model: 'some/model' });
+      assert.equal(models[0], 'some/model');
+    },
+  );
+});
+
+test('re-rolls a bare junk safety verdict from the free pool', () => {
+  let call = 0;
+  return withFetch(
+    async () => {
+      call += 1;
+      // One free-pool model answers everything with "user safety safe".
+      if (call === 1) return jsonResponse({ choices: [{ message: { content: 'user safety safe' } }] });
+      return jsonResponse({ choices: [{ message: { content: 'a real answer' } }] });
+    },
+    async () => {
+      const reply = await chat([{ role: 'user', content: 'hi' }]);
+      assert.equal(reply, 'a real answer');
+      assert.equal(call, 2, 'should have re-rolled exactly once');
+    },
+  );
+});
+
+test('gives up re-rolling after the retry budget instead of looping forever', () => {
+  let call = 0;
+  return withFetch(
+    async () => { call += 1; return jsonResponse({ choices: [{ message: { content: 'safe' } }] }); },
+    async () => {
+      const reply = await chat([{ role: 'user', content: 'hi' }]);
+      assert.equal(reply, 'safe');
+      assert.equal(call, 3, 'initial call plus JUNK_RETRIES re-rolls');
+    },
+  );
+});
+
+test('a long reply that merely mentions safety is not treated as junk', () => {
+  let call = 0;
+  return withFetch(
+    async () => {
+      call += 1;
+      return jsonResponse({
+        choices: [{ message: { content: 'That is safe to do, but back up your database first.' } }],
+      });
+    },
+    async () => {
+      const reply = await chat([{ role: 'user', content: 'hi' }]);
+      assert.equal(reply, 'That is safe to do, but back up your database first.');
+      assert.equal(call, 1, 'must not re-roll a genuine answer');
+    },
+  );
+});
+
 test('onToolCalls fires once, before the first round of tool calls runs', () => {
   let call = 0;
   const events = []; // records the order things happen in

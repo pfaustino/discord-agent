@@ -15,6 +15,7 @@ import {
 } from '@discordjs/voice';
 import prism from 'prism-media';
 
+import { MIN_UTTERANCE_SEC, MIN_UTTERANCE_RMS } from './config.js';
 import { chat, OpenRouterError } from './openrouter.js';
 import { recordTurn, formatForPrompt } from './conversation.js';
 import { VOICE_PROMPT, VOICE_OWNER_ACTION_NOTE } from './persona.js';
@@ -27,9 +28,11 @@ import { isOwner } from './utils.js';
 import * as db from './db.js';
 
 const SILENCE_MS = 1000;                 // silence gap that ends an utterance
-const MIN_UTTERANCE_SEC = 1.5;            // shorter blips are the noise gate, not speech
+// Noise gate thresholds come from the environment (see config.js) rather
+// than being hardcoded here, so the tuning already in the deployment for
+// the listener sidecar keeps working under the same variable names.
 const MIN_PCM_BYTES = 48000 * 2 * 2 * MIN_UTTERANCE_SEC;
-const MIN_RMS = 300;                      // loudness floor
+const MIN_RMS = MIN_UTTERANCE_RMS;        // loudness floor
 const STUCK_CONNECTION_MS = 60_000;
 const WAKE_COOLDOWN_MS = 8_000;
 const WAKE_GRACE_MS = 1_000;              // window for an instant "never mind"

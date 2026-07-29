@@ -7,6 +7,13 @@ export const DEV_GUILD_ID = process.env.DEV_GUILD_ID || '';
 
 export const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || '';
 export const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || 'anthropic/claude-3.5-haiku';
+// Model for background work — memory upkeep, signal classification,
+// de-escalation assessments. That's the large majority of call volume and
+// none of it needs the conversational model. "openrouter/free" routes
+// across OpenRouter's free-model pool at $0.
+export const OPENROUTER_UTILITY_MODEL = process.env.OPENROUTER_UTILITY_MODEL || 'openrouter/free';
+// Spend breaker: hard cap on background model calls per hour (0 = uncapped).
+export const OPENROUTER_BG_HOURLY_CAP = parseInt(process.env.OPENROUTER_BG_HOURLY_CAP || '240', 10);
 
 // Speech-to-text: any OpenAI-compatible /audio/transcriptions endpoint
 // (OpenAI Whisper, Groq, ...) — same env vars as the Python bot.
@@ -28,6 +35,13 @@ export const VOICE_WAKE_WORDS = (process.env.VOICE_WAKE_WORDS || 'hey max,hey an
 export const VOICE_CANCEL_WORDS = (process.env.VOICE_CANCEL_WORDS
   || 'never mind,nevermind,forget it,forget about it,cancel that,scratch that')
   .split(',').map((w) => w.trim().toLowerCase()).filter(Boolean);
+
+// Voice noise gate — utterances shorter than MIN_UTTERANCE_SEC seconds, or
+// quieter than MIN_UTTERANCE_RMS (0-32768), are dropped as background-noise
+// blips. Same env var names (and same defaults) the listener sidecar used,
+// so tuning already set in the deployment carries over untouched.
+export const MIN_UTTERANCE_SEC = parseFloat(process.env.MIN_UTTERANCE_SEC || '1.5');
+export const MIN_UTTERANCE_RMS = parseInt(process.env.MIN_UTTERANCE_RMS || '300', 10);
 
 // SQLite file path for the persistence layer (db.js).
 export const DATABASE_PATH = process.env.DATABASE_PATH || 'nodebot.db';
