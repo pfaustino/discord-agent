@@ -4,13 +4,22 @@ Fresh rebuild of Max from scratch, one layer at a time. This replaces the
 Python bot (`bot/`) — not a second bot, not running alongside it. When this
 is ready, it takes over and the Python code goes away.
 
-## Current layer: connect + one command + text/voice AI chat + tools + persistence
+## Current layer: connect + slash commands + text/voice AI chat + tools + persistence + moderation
 
 - `src/index.js` — client, logs in, opens the DB, handles slash commands,
   messages, and voice state updates
 - `src/commands/ping.js` — `/ping`, proves the slash-command path works
 - `src/commands/voicejoin.js` / `voiceleave.js` — owner-only, pin/unpin the
   voice channel to listen in
+- `src/commands/kick.js` `ban.js` `unban.js` `timeout.js` `untimeout.js`
+  `warn.js` `warnings.js` `clearwarnings.js` `purge.js` `slowmode.js`
+  `lock.js` `unlock.js` — ported from the Python bot's moderation.py,
+  owner-only via `utils.js`'s `requireOwner` (one inline check per command
+  file rather than a cog-level interaction_check, since commands here are
+  flat files, not a cog), logged via `utils.js`'s `logAction` (mod_logs +
+  an embed to the configured log channel, same as bot/utils.py's
+  log_action) — the first thing to actually exercise db.js's
+  warnings/mod_logs tables
 - `src/load-commands.js` — drops a new file in `src/commands/` to add a
   command, nothing else to wire up
 - `src/deploy-commands.js` — registers commands with Discord
@@ -101,8 +110,15 @@ real temp-file SQLite database (settings/DEFAULTS fallback, memory version
 archiving, manuscripts, knowledge base, turns durability/permanent log,
 warnings, mod logs), knowledge.js's slugify/formatting/dispatch, WAV
 encoding correctness, voice-tag stripping, wake/cancel-word matching,
-owner-check logic, the tool-calling agent loop's control flow (mocked
-fetch), and web_search's formatting (injected fake search function).
+owner-check logic (including `requireOwner`'s allow/deny branches),
+`logAction` against a real DB with fake guild/channel objects (records to
+mod_logs regardless of a log channel, posts an embed when one's configured
+and reachable, degrades quietly when it isn't), the tool-calling agent
+loop's control flow (mocked fetch), and web_search's formatting (injected
+fake search function). Moderation commands themselves aren't yet
+unit-tested end-to-end (that needs fuller Discord.js object mocking —
+member/ban/timeout calls, `interaction.deferReply`, etc.) — `requireOwner`
+and `logAction`, the two pieces every one of them shares, are.
 
 A couple of things can't be exercised live from this sandbox and are
 tested via dependency injection / mocked fetch instead, noted in the test
@@ -116,24 +132,33 @@ loop's control flow, not real API reachability).
 
 ## Known gaps in this layer, on purpose
 
-- Only one non-knowledge-base tool so far (`web_search`) — GitHub
-  read/write, sandbox, and moderation actions need an identity/write layer
-  that doesn't exist here yet. `recall_chat_log` (search the permanent
-  chat log) needs the turns table wired into conversation.js — schema
-  exists, wiring doesn't yet.
-- Settings exist (db.js) but there's no dashboard or slash commands to set
-  most of them yet, beyond what `/knowledge` proves out — wake/cancel
-  words still fall back to env vars until a guild has its own row.
+- Only one non-knowledge-base AI tool so far (`web_search`) — moderation
+  actions exist now as slash commands, but not yet as AI-callable tools
+  (the owner asking Max in chat/voice to kick someone doesn't work yet,
+  only `/kick` does). GitHub read/write and sandbox tools need their own
+  identity/write layer that doesn't exist here yet. `recall_chat_log`
+  (search the permanent chat log) needs the turns table wired into
+  conversation.js — schema exists, wiring doesn't yet.
+- No channel/role management commands (createchannel, giverole, ...) yet.
+- Settings exist (db.js) but there's no dashboard to set most of them from
+  yet, beyond what `/knowledge` and the moderation commands' `log_channel`
+  setting prove out — wake/cancel words still fall back to env vars until
+  a guild has its own row.
+- No welcome/goodbye messages, autorole, or automod (banned words, invite
+  blocking, mention spam) yet.
 - No banned-word flagging or de-escalation/pressure (proactive speech) in
   voice yet.
 - Single default persona unless `ai_system_prompt` is set directly in the
   DB — no per-guild dashboard UI for it yet.
+- Moderation commands aren't unit-tested end-to-end yet (see Test section
+  above) — only the shared owner-check/logging pieces are.
 
 ## Next layers (pick and choose, in whatever order makes sense)
 
-- more tools: GitHub read (then write), moderation actions, `recall_chat_log`
-- moderation commands (kick/ban/timeout/warn/purge/...), which also
-  exercise db.js's warnings/mod_logs tables for the first time
+- give the AI moderation/management tools (agent_tools.py's equivalent) so
+  the owner can ask Max in chat/voice to kick/ban/etc., not just `/command`
+- channel/role management commands + welcome/goodbye + automod
+- more AI tools: GitHub read (then write), sandbox, `recall_chat_log`
 - dashboard
 
 ## Cutover

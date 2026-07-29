@@ -105,6 +105,7 @@ export const DEFAULTS = {
   voice_wake_words: VOICE_WAKE_WORDS,
   voice_cancel_words: VOICE_CANCEL_WORDS,
   quiet_mode: false,
+  log_channel: null,
 };
 
 let db = null;
