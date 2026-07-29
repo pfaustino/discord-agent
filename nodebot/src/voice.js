@@ -15,13 +15,14 @@ import {
 } from '@discordjs/voice';
 import prism from 'prism-media';
 
-import { VOICE_WAKE_WORDS, VOICE_CANCEL_WORDS } from './config.js';
 import { chat, OpenRouterError } from './openrouter.js';
 import { recordTurn, formatForPrompt } from './conversation.js';
-import { SYSTEM_PROMPT, VOICE_PROMPT } from './persona.js';
+import { VOICE_PROMPT } from './persona.js';
 import * as transcription from './transcription.js';
 import * as tts from './tts.js';
 import { TOOL_SCHEMAS, runTool } from './tools.js';
+import { KB_TOOL_SCHEMAS, runTool as runKbTool } from './knowledge.js';
+import * as db from './db.js';
 
 const SILENCE_MS = 1000;                 // silence gap that ends an utterance
 const MIN_UTTERANCE_SEC = 1.5;            // shorter blips are the noise gate, not speech
@@ -89,7 +90,8 @@ async function joinChannel(channel) {
     return;
   }
   console.log(`[voice] listening in #${channel.name}`);
-  const hint = VOICE_WAKE_WORDS.length ? ` Say "${VOICE_WAKE_WORDS[0]}" to bring me into the conversation.` : '';
+  const wakeWords = db.getSetting(channel.guild.id, 'voice_wake_words');
+  const hint = wakeWords.length ? ` Say "${wakeWords[0]}" to bring me into the conversation.` : '';
   try {
     await channel.send(`🎙️ Heads-up: an AI is listening to this channel and transcribing speech.${hint}`);
   } catch (err) {
@@ -106,6 +108,11 @@ function leaveGuild(guild) {
 
 async function rebalance(guild) {
   let connection = getVoiceConnection(guild.id);
+
+  if (db.getSetting(guild.id, 'quiet_mode')) {
+    if (connection) leaveGuild(guild);
+    return;
+  }
 
   // Zombie detection: a connection stuck out of Ready (dead UDP, missed
   // disconnect event) is silently deaf — tear it down and rejoin.
@@ -229,6 +236,9 @@ function subscribeUser(connection, guild, channel, userId) {
 // -- content: transcribe, remember, wake word, reply -------------------------
 
 async function handleUtterance(guild, channel, userId, pcm) {
+  // Muted — rebalance() will leave the channel on its next sweep; drop
+  // until then rather than race a reply out during the gap.
+  if (db.getSetting(guild.id, 'quiet_mode')) return;
   const member = guild.members.cache.get(userId);
   if (member?.user.bot) return;
   const name = member?.displayName || `user-${userId}`;
@@ -254,7 +264,8 @@ async function handleUtterance(guild, channel, userId, pcm) {
 
   // Cancel words abort a pending wake response ("never mind, Max").
   const pending = pendingWake.get(channel.id);
-  if (pending && !pending.cancelled && matchesAny(text, VOICE_CANCEL_WORDS)) {
+  const cancelWords = db.getSetting(guild.id, 'voice_cancel_words');
+  if (pending && !pending.cancelled && matchesAny(text, cancelWords)) {
     pending.cancelled = true;
     clearTimeout(pending.timer);
     pending.controller?.abort();
@@ -263,7 +274,8 @@ async function handleUtterance(guild, channel, userId, pcm) {
     return;
   }
 
-  if (matchesAny(text, VOICE_WAKE_WORDS) && (!pending || pending.cancelled)) {
+  const wakeWords = db.getSetting(guild.id, 'voice_wake_words');
+  if (matchesAny(text, wakeWords) && (!pending || pending.cancelled)) {
     const state = { cancelled: false, controller: null, timer: null };
     state.timer = setTimeout(() => {
       if (state.cancelled) return;
@@ -281,7 +293,9 @@ async function respond(channel, speakerName, speakerId, state) {
   lastWake.set(channel.id, now);
 
   const guild = channel.guild;
-  const systemPrompt = SYSTEM_PROMPT + VOICE_PROMPT({ channel: channel.name, speaker: speakerName });
+  const basePrompt = db.getSetting(guild.id, 'ai_system_prompt');
+  const model = db.getSetting(guild.id, 'ai_model');
+  const systemPrompt = basePrompt + VOICE_PROMPT({ channel: channel.name, speaker: speakerName });
   const transcript = formatForPrompt(guild.id, CONTEXT_TURNS);
 
   state.controller = new AbortController();
@@ -291,8 +305,13 @@ async function respond(channel, speakerName, speakerId, state) {
       { role: 'system', content: systemPrompt },
       { role: 'user', content: `[voice transcript of #${channel.name}]\n${transcript}` },
     ], {
+      model,
       signal: state.controller.signal,
-      tools: TOOL_SCHEMAS, toolHandler: runTool, maxToolRounds: MAX_TOOL_ROUNDS,
+      tools: [...TOOL_SCHEMAS, ...KB_TOOL_SCHEMAS],
+      toolHandler: async (name, args) => (
+        name.startsWith('kb_') ? runKbTool(guild.id, name, args) : runTool(name, args)
+      ),
+      maxToolRounds: MAX_TOOL_ROUNDS,
     });
   } catch (err) {
     if (state.cancelled) return; // aborted by a cancel word — expected

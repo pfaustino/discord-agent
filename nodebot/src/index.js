@@ -1,13 +1,17 @@
 import { Client, Events, GatewayIntentBits, Partials } from 'discord.js';
-import { DISCORD_TOKEN } from './config.js';
+import { DISCORD_TOKEN, DATABASE_PATH } from './config.js';
 import { loadCommands } from './load-commands.js';
 import { handleMessage } from './textChat.js';
 import * as voice from './voice.js';
+import * as db from './db.js';
 
 if (!DISCORD_TOKEN) {
   console.error('DISCORD_TOKEN is required (see .env.example)');
   process.exit(1);
 }
+
+db.initDb(DATABASE_PATH);
+process.on('exit', () => db.closeDb());
 
 const client = new Client({
   intents: [

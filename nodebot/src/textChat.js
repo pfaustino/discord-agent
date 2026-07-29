@@ -1,18 +1,28 @@
-// Layer 2: persona + AI chat, text side. Voice (layer: TBD) will call
-// recordTurn/formatForPrompt from conversation.js the same way this does —
-// that shared buffer is the actual fix for text and voice not knowing
-// about each other, not anything specific to this file.
+// Persona + AI chat, text side. Voice (voice.js) calls recordTurn/
+// formatForPrompt from conversation.js the same way this does — that
+// shared buffer is the actual fix for text and voice not knowing about
+// each other, not anything specific to this file.
 import { chat, OpenRouterError } from './openrouter.js';
 import { recordTurn, formatForPrompt } from './conversation.js';
-import { SYSTEM_PROMPT } from './persona.js';
 import { TOOL_SCHEMAS, runTool } from './tools.js';
+import { KB_TOOL_SCHEMAS, runTool as runKbTool } from './knowledge.js';
+import * as db from './db.js';
 
 const HISTORY_LIMIT = 40;
 const MAX_TOOL_ROUNDS = 4;
 
+function toolHandler(guildId) {
+  return async (name, args) => {
+    if (name.startsWith('kb_')) return runKbTool(guildId, name, args);
+    return runTool(name, args);
+  };
+}
+
 export async function handleMessage(client, message) {
   if (message.author.bot || !message.guild) return;
   const guildId = message.guild.id;
+  if (!db.getSetting(guildId, 'ai_enabled')) return;
+
   const channelName = message.channel.name || 'unknown';
   const content = message.content.replace(`<@${client.user.id}>`, '').trim();
 
@@ -30,11 +40,16 @@ export async function handleMessage(client, message) {
 
   await message.channel.sendTyping();
   const transcript = formatForPrompt(guildId, HISTORY_LIMIT);
+  const systemPrompt = db.getSetting(guildId, 'ai_system_prompt');
+  const model = db.getSetting(guildId, 'ai_model');
   try {
     const reply = await chat([
-      { role: 'system', content: `${SYSTEM_PROMPT}\n\nRecent conversation:\n${transcript}` },
+      { role: 'system', content: `${systemPrompt}\n\nRecent conversation:\n${transcript}` },
       { role: 'user', content: `${message.author.username}: ${content || '(no text)'}` },
-    ], { tools: TOOL_SCHEMAS, toolHandler: runTool, maxToolRounds: MAX_TOOL_ROUNDS });
+    ], {
+      model, tools: [...TOOL_SCHEMAS, ...KB_TOOL_SCHEMAS],
+      toolHandler: toolHandler(guildId), maxToolRounds: MAX_TOOL_ROUNDS,
+    });
     recordTurn(guildId, { source: 'text', channel: channelName, speaker: client.user.username, text: reply });
     for (let i = 0; i < reply.length; i += 1990) {
       await message.reply({ content: reply.slice(i, i + 1990), allowedMentions: { repliedUser: false } });

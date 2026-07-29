@@ -19,11 +19,15 @@ export const FISH_API_KEY = process.env.FISH_API_KEY || '';
 export const FISH_TTS_MODEL = process.env.FISH_TTS_MODEL || 's2.1-pro-free';
 export const FISH_VOICE_ID = process.env.FISH_VOICE_ID || '';
 
-// No persistence layer yet (that's a later layer — see README), so wake/
-// cancel words are env-configured for now instead of per-guild dashboard
-// settings. Same defaults as the Python bot's db.py DEFAULTS.
+// Env-configured fallback defaults (used to seed db.js's DEFAULTS) — the
+// live, per-guild values come from db.getSetting(guildId, 'voice_wake_words'
+// / 'voice_cancel_words') once a guild has its own settings row. Same
+// defaults as the Python bot's db.py DEFAULTS.
 export const VOICE_WAKE_WORDS = (process.env.VOICE_WAKE_WORDS || 'hey max,hey andrew')
   .split(',').map((w) => w.trim().toLowerCase()).filter(Boolean);
 export const VOICE_CANCEL_WORDS = (process.env.VOICE_CANCEL_WORDS
   || 'never mind,nevermind,forget it,forget about it,cancel that,scratch that')
   .split(',').map((w) => w.trim().toLowerCase()).filter(Boolean);
+
+// SQLite file path for the persistence layer (db.js).
+export const DATABASE_PATH = process.env.DATABASE_PATH || 'nodebot.db';
