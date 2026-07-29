@@ -1,10 +1,20 @@
-# Hybrid runtime: Python bot + Node.js voice listener sidecar.
-# nodejs   — runs listener/ (discord.js voice with DAVE E2EE support)
-# ffmpeg   — TTS mp3 playback in the sidecar (via prism-media)
+# Node.js runtime. The whole bot is nodebot/ — text chat, voice (DAVE E2EE
+# via @snazzah/davey), moderation, automod, welcome, and the AI tool loop.
+# The Python tree is dormant: still in the repo, never installed or started.
+#
+# nodejs_22 — required by nodebot (node:sqlite, used by src/db.js, is built
+#             into Node 22, so there is no native sqlite to compile)
+# ffmpeg    — TTS playback via prism-media
+#
+# Overriding [phases.install] replaces Nixpacks' auto-detected pip install
+# (root requirements.txt still makes it detect a Python app), so no Python
+# dependencies are installed.
 [phases.setup]
-nixPkgs = ["...", "nodejs_22"]
+nixPkgs = ["nodejs_22"]
 aptPkgs = ["ffmpeg"]
 
-[phases.listener]
-dependsOn = ["install"]
-cmds = ["cd listener && npm ci --omit=dev"]
+[phases.install]
+cmds = ["cd nodebot && npm ci --omit=dev"]
+
+[start]
+cmd = "node nodebot/src/index.js"
