@@ -7,6 +7,7 @@ import { recordTurn, formatForPrompt } from './conversation.js';
 import { TOOL_SCHEMAS, runTool } from './tools.js';
 import { KB_TOOL_SCHEMAS, runTool as runKbTool } from './knowledge.js';
 import * as agentTools from './agentTools.js';
+import * as memory from './memory.js';
 import { MEMBER_NOTE, OWNER_NOTE } from './persona.js';
 import { isOwner } from './utils.js';
 import * as db from './db.js';
@@ -17,6 +18,7 @@ const OWNER_MAX_TOOL_ROUNDS = 8;
 
 function toolHandler(client, message, owner) {
   return async (name, args) => {
+    if (name === 'recall_chat_log') return memory.recall(message.guild.id, args);
     if (name.startsWith('kb_')) return runKbTool(message.guild.id, name, args);
     if (owner && name in agentTools.TOOLS) return agentTools.execute(client, message, name, args);
     return runTool(name, args);
@@ -38,20 +40,32 @@ export async function handleMessage(client, message) {
     // the Python bot — a message doesn't have to address the bot to be
     // something the bot should know about later (from voice, or from a
     // different channel).
-    if (content) recordTurn(guildId, { source: 'text', channel: channelName, speaker: message.author.username, text: content });
+    if (content) {
+      recordTurn(guildId, { source: 'text', channel: channelName, speaker: message.author.username, text: content });
+      memory.recordTurn(guildId, message.author.username, content, {
+        source: 'text', userId: message.author.id, channel: channelName,
+      });
+    }
     return;
   }
 
   recordTurn(guildId, { source: 'text', channel: channelName, speaker: message.author.username, text: content || '(no text)' });
+  memory.recordTurn(guildId, message.author.username, content, {
+    source: 'text', userId: message.author.id, channel: channelName,
+  });
 
   await message.channel.sendTyping();
   const transcript = formatForPrompt(guildId, HISTORY_LIMIT);
   const basePrompt = db.getSetting(guildId, 'ai_system_prompt');
-  const systemPrompt = `${basePrompt}\n\n${owner ? OWNER_NOTE : MEMBER_NOTE}`;
+  // The speaker's own profile card comes first, then guild-wide durable and
+  // working memory — so who you're talking to isn't buried in the dump.
+  const memoryBlock = memory.getContext(guildId, message.author.id);
+  const systemPrompt = [basePrompt, memoryBlock, owner ? OWNER_NOTE : MEMBER_NOTE]
+    .filter(Boolean).join('\n\n');
   const model = db.getSetting(guildId, 'ai_model');
   const tools = owner
-    ? [...TOOL_SCHEMAS, ...KB_TOOL_SCHEMAS, ...agentTools.TOOL_SCHEMAS]
-    : [...TOOL_SCHEMAS, ...KB_TOOL_SCHEMAS];
+    ? [...TOOL_SCHEMAS, ...KB_TOOL_SCHEMAS, memory.RECALL_TOOL_SCHEMA, ...agentTools.TOOL_SCHEMAS]
+    : [...TOOL_SCHEMAS, ...KB_TOOL_SCHEMAS, memory.RECALL_TOOL_SCHEMA];
   try {
     const reply = await chat([
       { role: 'system', content: `${systemPrompt}\n\nRecent conversation:\n${transcript}` },
@@ -62,6 +76,10 @@ export async function handleMessage(client, message) {
       maxToolRounds: owner ? OWNER_MAX_TOOL_ROUNDS : MAX_TOOL_ROUNDS,
     });
     recordTurn(guildId, { source: 'text', channel: channelName, speaker: client.user.username, text: reply });
+    // userId null: Max doesn't get a profile card built about himself.
+    memory.recordTurn(guildId, client.user.username, reply, {
+      source: 'text', userId: null, channel: channelName,
+    });
     for (let i = 0; i < reply.length; i += 1990) {
       await message.reply({ content: reply.slice(i, i + 1990), allowedMentions: { repliedUser: false } });
     }

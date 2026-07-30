@@ -24,6 +24,7 @@ import * as tts from './tts.js';
 import { TOOL_SCHEMAS, runTool } from './tools.js';
 import { KB_TOOL_SCHEMAS, runTool as runKbTool } from './knowledge.js';
 import * as agentTools from './agentTools.js';
+import * as memory from './memory.js';
 import { isOwner } from './utils.js';
 import * as db from './db.js';
 
@@ -307,6 +308,9 @@ async function handleUtterance(guild, channel, userId, pcm) {
   console.log(`[voice] [#${channel.name}] ${name}: ${text}`);
 
   recordTurn(guild.id, { source: 'voice', channel: channel.name, speaker: name, text });
+  memory.recordTurn(guild.id, name, text, {
+    source: 'voice', userId, channel: channel.name,
+  });
 
   // Cancel words abort a pending wake response ("never mind, Max").
   const pending = pendingWake.get(channel.id);
@@ -343,6 +347,10 @@ async function respond(channel, speakerName, speakerId, state) {
   const basePrompt = db.getSetting(guild.id, 'ai_system_prompt');
   const model = db.getSetting(guild.id, 'ai_model');
   let systemPrompt = basePrompt + VOICE_PROMPT({ channel: channel.name, speaker: speakerName });
+  // Same memory block text chat gets — the speaker's profile card first,
+  // then guild-wide durable/working memory.
+  const memoryBlock = memory.getContext(guild.id, speakerId);
+  if (memoryBlock) systemPrompt += `\n\n${memoryBlock}`;
   if (owner) systemPrompt += VOICE_OWNER_ACTION_NOTE;
   const transcript = formatForPrompt(guild.id, CONTEXT_TURNS);
 
@@ -355,9 +363,10 @@ async function respond(channel, speakerName, speakerId, state) {
       || { id: speakerId, tag: speakerName, username: speakerName },
   };
   const tools = owner
-    ? [...TOOL_SCHEMAS, ...KB_TOOL_SCHEMAS, ...agentTools.TOOL_SCHEMAS]
-    : [...TOOL_SCHEMAS, ...KB_TOOL_SCHEMAS];
+    ? [...TOOL_SCHEMAS, ...KB_TOOL_SCHEMAS, memory.RECALL_TOOL_SCHEMA, ...agentTools.TOOL_SCHEMAS]
+    : [...TOOL_SCHEMAS, ...KB_TOOL_SCHEMAS, memory.RECALL_TOOL_SCHEMA];
   const toolHandler = async (name, args) => {
+    if (name === 'recall_chat_log') return memory.recall(guild.id, args);
     if (name.startsWith('kb_')) return runKbTool(guild.id, name, args);
     if (owner && name in agentTools.TOOLS) return agentTools.execute(null, fakeMessage, name, args);
     return runTool(name, args);
@@ -397,6 +406,10 @@ async function respond(channel, speakerName, speakerId, state) {
 
   const display = tts.stripVoiceTags(reply) || reply;
   recordTurn(guild.id, { source: 'voice', channel: channel.name, speaker: 'Max', text: display });
+  // userId null: Max doesn't get a profile card built about himself.
+  memory.recordTurn(guild.id, 'Max', display, {
+    source: 'voice', userId: null, channel: channel.name,
+  });
   try {
     for (let i = 0; i < display.length; i += 1990) {
       await channel.send(display.slice(i, i + 1990));

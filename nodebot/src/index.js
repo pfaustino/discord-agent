@@ -5,6 +5,7 @@ import { handleMessage } from './textChat.js';
 import * as voice from './voice.js';
 import * as automod from './automod.js';
 import * as welcome from './welcome.js';
+import * as memory from './memory.js';
 import * as db from './db.js';
 
 if (!DISCORD_TOKEN) {
@@ -14,6 +15,10 @@ if (!DISCORD_TOKEN) {
 
 db.initDb(DATABASE_PATH);
 process.on('exit', () => db.closeDb());
+
+// Replay anything said but never folded into memory before the last
+// shutdown — a redeploy landing mid-conversation would otherwise lose it.
+memory.restorePendingTurns();
 
 // GuildMembers is a privileged intent — must also be enabled in the
 // Discord Developer Portal (Bot tab → Privileged Gateway Intents), same
