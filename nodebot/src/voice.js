@@ -19,6 +19,7 @@ import { MIN_UTTERANCE_SEC, MIN_UTTERANCE_RMS } from './config.js';
 import { chat, OpenRouterError } from './openrouter.js';
 import { recordTurn, formatForPrompt } from './conversation.js';
 import { VOICE_PROMPT, VOICE_OWNER_ACTION_NOTE, VOICE_PASS } from './persona.js';
+import { buildSystemPrompt } from './systemPrompt.js';
 import * as transcription from './transcription.js';
 import * as tts from './tts.js';
 import { TOOL_SCHEMAS, runTool } from './tools.js';
@@ -462,14 +463,16 @@ async function respond(channel, speakerName, speakerId, state, { followUp = fals
 
   const guild = channel.guild;
   const owner = isOwner(speakerId);
-  const basePrompt = db.getSetting(guild.id, 'ai_system_prompt');
   const model = db.getSetting(guild.id, 'ai_model');
-  let systemPrompt = basePrompt
-    + VOICE_PROMPT({ channel: channel.name, speaker: speakerName, followUp });
-  // Same memory block text chat gets — the speaker's profile card first,
-  // then guild-wide durable/working memory.
+  // Same assembly text chat uses — character persona, the real command list,
+  // capabilities, owner/member note — so the two surfaces describe the same
+  // bot. Voice-specific framing is appended after it. The memory block is the
+  // same one text chat gets: the speaker's profile card first, then
+  // guild-wide durable/working memory.
   const memoryBlock = memory.getContext(guild.id, speakerId);
-  if (memoryBlock) systemPrompt += `\n\n${memoryBlock}`;
+  let systemPrompt = buildSystemPrompt({
+    client: channel.client, guild, owner, memory: memoryBlock,
+  }) + VOICE_PROMPT({ channel: channel.name, speaker: speakerName, followUp });
   if (owner) systemPrompt += VOICE_OWNER_ACTION_NOTE;
   const transcript = formatForPrompt(guild.id, CONTEXT_TURNS);
 

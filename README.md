@@ -171,6 +171,36 @@ Run the tests with `npm test` from `nodebot/`.
 
 Dashboard: http://localhost:8000
 
+### Persona: two halves
+
+The system prompt is assembled from two separately editable settings, both on
+the dashboard's Overview tab:
+
+| Setting | What it is |
+|---|---|
+| `ai_system_prompt` | **Character** — who he is, how he talks. Yours to write. |
+| `ai_capability_prompt` | **Capability** — what he can actually do. |
+
+Both default to the text in `src/persona.js`. A server that has never saved its
+own copy keeps getting the current default, so neither can be lost to a fresh
+database, and the capability half stays true as features land. Save either from
+the dashboard and that server is pinned to its own copy from then on — nothing
+overwrites it afterwards.
+
+The slash-command list is **not** part of either one. It's generated from the
+live command table on every request (`src/systemPrompt.js`), so it can't go
+stale, and a stored persona can never claim a command that no longer exists.
+
+Full assembly order: character → who he is and which server he runs, with the
+command list → capability → owner or member note → what he remembers. Text
+chat and voice call the same builder, so the two surfaces can't describe
+different bots.
+
+> Keep the capability half honest. A persona that claims a tool the bot doesn't
+> have produces a bot that confidently lies about what it did. `npm test`
+> enforces this: every tool and slash command named in `CAPABILITY_PROMPT` must
+> actually exist.
+
 ### Migrating from the Python bot
 
 Settings (persona, welcome messages, banned words, log channel, autorole,

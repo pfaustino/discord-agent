@@ -24,7 +24,7 @@ import {
   VOICE_WAKE_WORDS, VOICE_CANCEL_WORDS, VOICE_STOP_SPEAKING_WORDS,
   VOICE_STOP_LISTENING_WORDS, VOICE_FOLLOWUP_WINDOW_SEC, OPENROUTER_MODEL,
 } from './config.js';
-import { SYSTEM_PROMPT } from './persona.js';
+import { SYSTEM_PROMPT, CAPABILITY_PROMPT } from './persona.js';
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS guild_settings (
@@ -104,7 +104,17 @@ export const MEMORY_VERSIONS_KEPT = 10;
 export const DEFAULTS = {
   ai_enabled: true,
   ai_model: OPENROUTER_MODEL,
+  // Two halves, edited separately on the dashboard: who he is, and what he
+  // can do. A guild that never customises one keeps getting the current text
+  // from persona.js, so neither can be lost to a fresh database and the
+  // capability half stays true as features land. Saving from the dashboard
+  // pins that guild to its own copy.
   ai_system_prompt: SYSTEM_PROMPT,
+  ai_capability_prompt: CAPABILITY_PROMPT,
+  // Channels where he replies to everything, no @mention needed. The
+  // dashboard has always offered this control; without the key here the
+  // settings PUT rejected it and the whole Settings tab failed to save.
+  ai_channels: [],
   voice_wake_words: VOICE_WAKE_WORDS,
   voice_cancel_words: VOICE_CANCEL_WORDS,
   // Follow-up mode: for this many seconds after Max finishes speaking,

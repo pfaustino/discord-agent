@@ -266,3 +266,41 @@ test('the logs endpoint reports entries and the latest id', () => withServer(asy
   assert.ok(Array.isArray(body.entries));
   assert.equal(typeof body.latest, 'number');
 }));
+
+// -- the persona save the dashboard actually performs -------------------------
+
+// app.js's "Save persona" button PUTs both halves together. ai_capability_prompt
+// was missing from db.DEFAULTS, so the whole request 400'd and neither half
+// saved — which is how a customised character persona could appear to have
+// been wiped.
+test('saving both persona halves together succeeds', () => withServer(async (call) => {
+  const res = await call('PUT', '/api/guilds/111/settings', {
+    cookie: authCookie(),
+    body: {
+      ai_system_prompt: 'You are a laconic robot.',
+      ai_capability_prompt: 'You can do the things.',
+    },
+  });
+  assert.equal(res.status, 200);
+  const settings = await (await call('GET', '/api/guilds/111/settings', { cookie: authCookie() })).json();
+  assert.equal(settings.ai_system_prompt, 'You are a laconic robot.');
+  assert.equal(settings.ai_capability_prompt, 'You can do the things.');
+}));
+
+// Same failure on the Settings tab: ai_channels was missing, so nothing on
+// that tab saved either — automod, banned words, wake words, log channel.
+test('saving the settings tab payload succeeds, ai_channels included', () => withServer(async (call) => {
+  const res = await call('PUT', '/api/guilds/111/settings', {
+    cookie: authCookie(),
+    body: {
+      ai_channels: ['123', '456'],
+      automod_enabled: true,
+      banned_words: ['spam'],
+      voice_wake_words: ['hey max'],
+    },
+  });
+  assert.equal(res.status, 200);
+  const settings = await (await call('GET', '/api/guilds/111/settings', { cookie: authCookie() })).json();
+  assert.deepEqual(settings.ai_channels, ['123', '456']);
+  assert.equal(settings.automod_enabled, true);
+}));

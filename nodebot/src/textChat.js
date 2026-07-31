@@ -11,7 +11,7 @@ import * as documents from './documents.js';
 import * as github from './github.js';
 import * as introspect from './introspect.js';
 import * as memory from './memory.js';
-import { MEMBER_NOTE, OWNER_NOTE } from './persona.js';
+import { buildSystemPrompt } from './systemPrompt.js';
 import { isOwner } from './utils.js';
 import * as db from './db.js';
 
@@ -101,7 +101,11 @@ export async function handleMessage(client, message) {
   const channelName = message.channel.name || 'unknown';
   const content = message.content.replace(`<@${client.user.id}>`, '').trim();
 
-  const mentioned = message.mentions.has(client.user.id);
+  // An always-on channel is one the dashboard listed under ai_channels: in
+  // there he answers everything, no @mention needed.
+  const alwaysOn = (db.getSetting(guildId, 'ai_channels') || [])
+    .map(String).includes(String(message.channel.id));
+  const mentioned = message.mentions.has(client.user.id) || alwaysOn;
   if (!mentioned) {
     // Ambient: remember it happened, but don't reply. Same reasoning as
     // the Python bot — a message doesn't have to address the bot to be
@@ -142,12 +146,12 @@ export async function handleMessage(client, message) {
     console.warn('[github] repo auto-attach failed:', err?.message || err);
   }
   const transcript = formatForPrompt(guildId, HISTORY_LIMIT);
-  const basePrompt = db.getSetting(guildId, 'ai_system_prompt');
   // The speaker's own profile card comes first, then guild-wide durable and
   // working memory — so who you're talking to isn't buried in the dump.
   const memoryBlock = memory.getContext(guildId, message.author.id);
-  const systemPrompt = [basePrompt, memoryBlock, owner ? OWNER_NOTE : MEMBER_NOTE]
-    .filter(Boolean).join('\n\n');
+  const systemPrompt = buildSystemPrompt({
+    client, guild: message.guild, owner, memory: memoryBlock,
+  });
   const model = db.getSetting(guildId, 'ai_model');
   const baseTools = [
     ...TOOL_SCHEMAS, ...KB_TOOL_SCHEMAS, memory.RECALL_TOOL_SCHEMA,
