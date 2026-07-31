@@ -6,12 +6,18 @@ import * as voice from './voice.js';
 import * as automod from './automod.js';
 import * as welcome from './welcome.js';
 import * as memory from './memory.js';
+import * as proactive from './proactive.js';
+import * as logbuffer from './logbuffer.js';
 import * as db from './db.js';
 
 if (!DISCORD_TOKEN) {
   console.error('DISCORD_TOKEN is required (see .env.example)');
   process.exit(1);
 }
+
+// Tee console output into the ring buffer the dashboard reads. Installed
+// before anything else logs so startup lines are captured too.
+logbuffer.install();
 
 db.initDb(DATABASE_PATH);
 process.on('exit', () => db.closeDb());
@@ -38,6 +44,8 @@ client.commands = await loadCommands();
 client.once(Events.ClientReady, (c) => {
   console.log(`Logged in as ${c.user.tag} (${c.user.id}) — ${c.guilds.cache.size} guild(s)`);
   voice.init(c);
+  // Pressure decay/flow runs on its own clock, independent of message traffic.
+  proactive.startTicker(c);
 });
 
 client.on(Events.InteractionCreate, async (interaction) => {
@@ -67,6 +75,14 @@ client.on(Events.MessageCreate, async (message) => {
     await handleMessage(client, message);
   } catch (err) {
     console.error('message handling failed:', err);
+  }
+  // Observation and signal classification for proactive speech. Runs for
+  // every message including Max's own (which are observed but never charge
+  // pressure), independently of whether the AI replied.
+  try {
+    await proactive.handleMessage(client, message);
+  } catch (err) {
+    console.error('proactive observation failed:', err);
   }
 });
 

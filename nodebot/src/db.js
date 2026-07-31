@@ -116,6 +116,15 @@ export const DEFAULTS = {
   banned_words: [],
   block_invites: false,
   max_mentions: 0,
+  // proactive speech (pressure engine) — off until deliberately enabled,
+  // same as the Python bot: speaking unprompted is opt-in per guild.
+  pressure_enabled: false,
+  // de-escalation. deesc_harsh_language is the separate server preference
+  // track that can produce a gentle check-in but never climbs the ladder.
+  deesc_enabled: false,
+  deesc_harsh_language: false,
+  // background/utility model override; null falls back to the env default
+  ai_utility_model: null,
 };
 
 let db = null;

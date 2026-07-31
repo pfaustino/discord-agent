@@ -313,6 +313,11 @@ async function handleUtterance(guild, channel, userId, pcm) {
   memory.recordTurn(guild.id, name, text, {
     source: 'voice', userId, channel: channel.name,
   });
+  // Voice transcripts feed the pressure classifier too, so proactive speech
+  // sees what was said out loud, not just what was typed.
+  import('./proactive.js')
+    .then((proactive) => proactive.feedVoice(guild, channel.id, userId, name, text))
+    .catch((err) => console.error('[voice] pressure feed failed:', err?.message || err));
 
   // Cancel words abort a pending wake response ("never mind, Max").
   const pending = pendingWake.get(channel.id);
@@ -428,7 +433,7 @@ async function respond(channel, speakerName, speakerId, state) {
 
 // -- TTS playback -------------------------------------------------------------
 
-async function speakInVoice(guild, text) {
+export async function speakInVoice(guild, text) {
   const connection = getVoiceConnection(guild.id);
   if (!connection) return false;
   const audio = await tts.synthesize(text);
