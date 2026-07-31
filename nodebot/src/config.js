@@ -9,6 +9,13 @@ export const BUILD_ID = String(Math.floor(Date.now() / 1000));
 // Dashboard: password login and the key that signs session cookies. Same
 // env var names as the Python bot.
 export const DASHBOARD_PASSWORD = process.env.DASHBOARD_PASSWORD || '';
+// Discord OAuth for dashboard login ("Sign in with Discord"). Without the
+// secret, login stays password-only. Discord Developer Portal → your app →
+// OAuth2 → Client Secret, and add <PUBLIC_URL>/api/auth/callback under Redirects.
+export const DISCORD_CLIENT_SECRET = process.env.DISCORD_CLIENT_SECRET || '';
+// Public origin of the dashboard, e.g. https://max.up.railway.app. Only needed
+// when the reverse proxy rewrites Host; otherwise it is derived per request.
+export const PUBLIC_URL = process.env.PUBLIC_URL || '';
 export const SECRET_KEY = process.env.SECRET_KEY || '';
 export const PORT = parseInt(process.env.PORT || '8000', 10);
 

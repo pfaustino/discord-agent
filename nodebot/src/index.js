@@ -1,5 +1,6 @@
 import { Client, Events, GatewayIntentBits, Partials } from 'discord.js';
-import { DISCORD_TOKEN, DATABASE_PATH } from './config.js';
+import { DISCORD_TOKEN, DATABASE_PATH, SECRET_KEY } from './config.js';
+import { reportPreflight } from './preflight.js';
 import { loadCommands } from './load-commands.js';
 import { handleMessage } from './textChat.js';
 import * as voice from './voice.js';
@@ -19,6 +20,11 @@ if (!DISCORD_TOKEN) {
 // Tee console output into the ring buffer the dashboard reads. Installed
 // before anything else logs so startup lines are captured too.
 logbuffer.install();
+
+// Says where the database actually is, and shouts if it is somewhere that
+// will not survive a deploy. Runs after logbuffer.install() so the warnings
+// show up in the dashboard's Logs tab too, not just Railway's.
+reportPreflight({ databasePath: DATABASE_PATH, secretKey: SECRET_KEY });
 
 try {
   db.initDb(DATABASE_PATH);

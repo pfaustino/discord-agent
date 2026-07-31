@@ -1,6 +1,7 @@
 // Password login with signed session-cookie tokens. Ported from web/auth.py.
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { DASHBOARD_PASSWORD, SECRET_KEY } from '../config.js';
+import { isLevel } from './roles.js';
 
 // If SECRET_KEY isn't set, generate one per process (sessions reset on
 // restart) rather than falling back to a predictable value.
@@ -19,20 +20,36 @@ function safeEqual(a, b) {
   return timingSafeEqual(bufA, bufB);
 }
 
-export function createToken() {
+/**
+ * Session token: `expiry.level.userId.signature`.
+ *
+ * The level is inside the signed payload, not alongside it — otherwise
+ * anyone holding a valid moderator cookie could rewrite one field and
+ * promote themselves. userId rides along so the dashboard can show who is
+ * signed in, and so a level can be re-derived from live Discord roles rather
+ * than trusted from the cookie forever.
+ */
+export function createToken(level = 'creator', userId = '') {
   const expiry = String(Math.floor(Date.now() / 1000) + TOKEN_TTL);
-  return `${expiry}.${sign(expiry)}`;
+  const payload = `${expiry}.${level}.${encodeURIComponent(userId)}`;
+  return `${payload}.${sign(payload)}`;
+}
+
+/** @returns {{level: string, userId: string, expiresAt: number}|null} */
+export function readToken(token) {
+  const raw = String(token || '');
+  const parts = raw.split('.');
+  if (parts.length !== 4) return null;
+  const [expiry, level, userId, signature] = parts;
+  if (!safeEqual(signature, sign(`${expiry}.${level}.${userId}`))) return null;
+  const expiresAt = parseInt(expiry, 10);
+  if (!Number.isFinite(expiresAt) || expiresAt <= Date.now() / 1000) return null;
+  if (!isLevel(level) || level === 'none') return null;
+  return { level, userId: decodeURIComponent(userId), expiresAt };
 }
 
 export function verifyToken(token) {
-  const raw = String(token || '');
-  const dot = raw.indexOf('.');
-  if (dot === -1) return false;
-  const expiry = raw.slice(0, dot);
-  const signature = raw.slice(dot + 1);
-  if (!safeEqual(signature, sign(expiry))) return false;
-  const expiresAt = parseInt(expiry, 10);
-  return Number.isFinite(expiresAt) && expiresAt > Date.now() / 1000;
+  return readToken(token) !== null;
 }
 
 export function checkPassword(password) {
@@ -53,4 +70,24 @@ export function parseCookies(header) {
 
 export function isAuthenticated(req) {
   return verifyToken(parseCookies(req.headers.cookie).session);
+}
+
+/** The signed-in session, or null. */
+export function sessionOf(req) {
+  return readToken(parseCookies(req.headers.cookie).session);
+}
+
+/** Signed, short-lived value for the OAuth `state` round trip, so a callback
+ * can be proven to belong to a login this dashboard actually started. */
+export function createState() {
+  const nonce = `${Math.floor(Date.now() / 1000) + 600}.${randomBytes(12).toString('hex')}`;
+  return `${nonce}.${sign(nonce)}`;
+}
+
+export function verifyState(state) {
+  const parts = String(state || '').split('.');
+  if (parts.length !== 3) return false;
+  const [expiry, nonce, signature] = parts;
+  if (!safeEqual(signature, sign(`${expiry}.${nonce}`))) return false;
+  return parseInt(expiry, 10) > Date.now() / 1000;
 }

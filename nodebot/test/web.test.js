@@ -351,3 +351,65 @@ test('a non-phrase setting is not mangled by the phrase parser', () => withServe
   const s = await (await call('GET', '/api/guilds/111/settings', { cookie: authCookie() })).json();
   assert.equal(s.welcome_message, 'Welcome {user}, glad you made it!');
 }));
+
+// -- access levels are enforced by the server, not just hidden in the UI -----
+
+const cookieFor = (level) => `session=${createToken(level, '222')}`;
+
+test('a moderator cannot change settings', () => withServer(async (call) => {
+  const res = await call('PUT', '/api/guilds/111/settings', {
+    cookie: cookieFor('moderator'),
+    body: { ai_model: 'something/else' },
+  });
+  assert.equal(res.status, 403);
+  assert.match((await res.json()).detail, /needs admin access/);
+}));
+
+test('a moderator can still read settings and act on members', () => withServer(async (call) => {
+  assert.equal((await call('GET', '/api/guilds/111/settings', { cookie: cookieFor('moderator') })).status, 200);
+  assert.equal((await call('GET', '/api/guilds/111/members', { cookie: cookieFor('moderator') })).status, 200);
+}));
+
+test('an admin can change settings', () => withServer(async (call) => {
+  const res = await call('PUT', '/api/guilds/111/settings', {
+    cookie: cookieFor('admin'),
+    body: { ai_model: 'something/else' },
+  });
+  assert.equal(res.status, 200);
+}));
+
+test('an admin cannot read the global bot log or change presence', () => withServer(async (call) => {
+  // The log buffer spans everything the process does; presence is the bot's
+  // own identity. Both are the instance owner's.
+  assert.equal((await call('GET', '/api/logs', { cookie: cookieFor('admin') })).status, 403);
+  assert.equal((await call('POST', '/api/presence', {
+    cookie: cookieFor('admin'), body: { status: 'idle' },
+  })).status, 403);
+}));
+
+test('the creator can do all of it', () => withServer(async (call) => {
+  assert.equal((await call('GET', '/api/logs', { cookie: cookieFor('creator') })).status, 200);
+  assert.equal((await call('PUT', '/api/guilds/111/settings', {
+    cookie: cookieFor('creator'), body: { ai_model: 'x' },
+  })).status, 200);
+}));
+
+test('no cookie is still a 401, not a 403', () => withServer(async (call) => {
+  assert.equal((await call('GET', '/api/guilds/111/settings')).status, 401);
+}));
+
+test('the Discord login config endpoint is reachable without signing in', () => withServer(async (call) => {
+  const res = await call('GET', '/api/auth/config');
+  assert.equal(res.status, 200);
+  assert.equal(typeof (await res.json()).discord, 'boolean');
+}));
+
+test('role mappings save like any other setting', () => withServer(async (call) => {
+  await call('PUT', '/api/guilds/111/settings', {
+    cookie: cookieFor('admin'),
+    body: { dashboard_admin_roles: ['500'], dashboard_mod_roles: ['600'] },
+  });
+  const s = await (await call('GET', '/api/guilds/111/settings', { cookie: cookieFor('admin') })).json();
+  assert.deepEqual(s.dashboard_admin_roles, ['500']);
+  assert.deepEqual(s.dashboard_mod_roles, ['600']);
+}));

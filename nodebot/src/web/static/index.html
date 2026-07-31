@@ -13,10 +13,12 @@
   <div id="login-screen" class="hidden">
     <div class="login-card">
       <h1>Discord Agent</h1>
-      <p class="muted">Enter the dashboard password</p>
+      <a id="login-discord" class="btn primary full hidden" href="/api/auth/discord">Sign in with Discord</a>
+      <p id="login-discord-note" class="muted hidden">Your access follows your roles in the server.</p>
+      <p class="muted" id="login-password-label">Enter the dashboard password</p>
       <form id="login-form">
         <input type="password" id="login-password" placeholder="Password" autocomplete="current-password" required>
-        <button type="submit" class="btn primary full">Log in</button>
+        <button type="submit" class="btn full">Log in</button>
       </form>
       <p id="login-error" class="error hidden">Wrong password</p>
     </div>
