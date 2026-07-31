@@ -36,6 +36,110 @@ function isJunkVerdict(content) {
   return text.length < 40 && JUNK_VERDICT_RE.test(text);
 }
 
+const RETRYABLE_STATUSES = new Set([408, 409, 425, 429, 500, 502, 503, 504]);
+const MAX_RETRIES = 3;              // additional attempts, foreground only
+const BASE_BACKOFF_MS = 700;
+const MAX_BACKOFF_MS = 8_000;
+
+/** Signals "this model can't do tool calling" so the caller can re-run the
+ * same round without tools. Internal — never escapes chat(). */
+class ToolUnsupportedError extends Error {}
+
+/**
+ * OpenRouter reports an upstream provider failure in TWO different shapes: a
+ * real HTTP error, and — the one that actually bit us — HTTP 200 with an
+ * error object in the body:
+ *
+ *   {"error":{"message":"Provider returned error","code":429}}
+ *
+ * Checking resp.ok alone misses that entirely. A plain rate limit fell
+ * through to the `!reply` branch and surfaced as "Unexpected OpenRouter
+ * response", which reads like a protocol bug, and was never retried.
+ *
+ * @returns {{status: number, message: string}|null} null when genuinely fine.
+ */
+export function readError(resp, data, text) {
+  const bodyCode = Number.parseInt(data?.error?.code, 10);
+  let status = 0;
+  if (!resp.ok) status = resp.status;
+  else if (Number.isFinite(bodyCode) && bodyCode >= 400) status = bodyCode;
+  else if (data?.error) status = 502; // an error with no usable code
+  if (!status) return null;
+  return {
+    status,
+    message: data?.error?.message || String(text || '').slice(0, 300) || `HTTP ${status}`,
+  };
+}
+
+/** Exponential backoff with jitter, but honour Retry-After when given. */
+export function backoffMs(attempt, retryAfter, rand = Math.random) {
+  const secs = Number.parseInt(retryAfter, 10);
+  if (Number.isFinite(secs) && secs > 0) return Math.min(secs * 1000, MAX_BACKOFF_MS);
+  const base = Math.min(BASE_BACKOFF_MS * (2 ** (attempt - 1)), MAX_BACKOFF_MS);
+  return base + Math.floor(rand() * 250);
+}
+
+function sleep(ms, signal) {
+  if (ms <= 0) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(resolve, ms);
+    signal?.addEventListener?.('abort', () => {
+      clearTimeout(timer);
+      reject(new Error('aborted'));
+    }, { once: true });
+  });
+}
+
+async function requestCompletion(payload, signal, background) {
+  // Background work gets exactly one shot. It is best-effort by definition,
+  // and retrying it would have it compete with the conversation for the same
+  // rate limit — making a 429 more likely for the reply somebody is actually
+  // sitting there waiting on. The hourly budget breaker already caps it.
+  const attempts = background ? 1 : MAX_RETRIES + 1;
+  let last = null;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    // eslint-disable-next-line no-await-in-loop
+    const resp = await fetch(API_URL, {
+      method: 'POST',
+      signal,
+      headers: {
+        Authorization: `Bearer ${OPENROUTER_API_KEY}`,
+        'Content-Type': 'application/json',
+        'X-Title': 'Discord Agent',
+      },
+      body: JSON.stringify(payload),
+    });
+    // eslint-disable-next-line no-await-in-loop
+    const text = await resp.text();
+    let data = null;
+    try {
+      data = JSON.parse(text);
+    } catch { /* non-JSON body — readError falls back to the raw text */ }
+
+    const err = readError(resp, data, text);
+    if (!err) return data;
+
+    // Free-pool (and some budget) models don't support tool calling. Not a
+    // failure — the caller retries the round without tools.
+    if (payload.tools && [400, 404].includes(err.status)
+        && err.message.toLowerCase().includes('tool')) {
+      throw new ToolUnsupportedError(err.message);
+    }
+
+    last = err;
+    if (!RETRYABLE_STATUSES.has(err.status) || attempt === attempts) break;
+    const wait = backoffMs(attempt, resp.headers?.get?.('retry-after'));
+    console.warn(`[openrouter] ${err.status} from ${payload.model} — `
+      + `retrying in ${wait}ms (attempt ${attempt}/${attempts - 1})`);
+    // eslint-disable-next-line no-await-in-loop
+    await sleep(wait, signal);
+  }
+  const label = last.status === 429 ? 'rate limited' : `error ${last.status}`;
+  throw new OpenRouterError(
+    `OpenRouter ${label} (${payload.model}${background ? ', background' : ''}): ${last.message}`,
+  );
+}
+
 /**
  * @param {Array} messages
  * @param {object} [opts]
@@ -78,29 +182,21 @@ export async function chat(messages, {
     };
     if (useTools && round < maxToolRounds) payload.tools = tools;
 
-    const resp = await fetch(API_URL, {
-      method: 'POST',
-      signal,
-      headers: {
-        Authorization: `Bearer ${OPENROUTER_API_KEY}`,
-        'Content-Type': 'application/json',
-        'X-Title': 'Discord Agent',
-      },
-      body: JSON.stringify(payload),
-    });
-    if (!resp.ok) {
-      const text = await resp.text();
+    let data;
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      data = await requestCompletion(payload, signal, background);
+    } catch (err) {
       // Free-pool (and some budget) models don't support tool calling —
       // degrade to a plain reply instead of failing outright.
-      if (payload.tools && [400, 404].includes(resp.status) && text.toLowerCase().includes('tool')) {
-        console.warn(`[openrouter] model rejected tool use — retrying without tools (${text.slice(0, 120)})`);
+      if (err instanceof ToolUnsupportedError) {
+        console.warn(`[openrouter] model rejected tool use — retrying without tools (${err.message.slice(0, 120)})`);
         useTools = false;
         round -= 1; // retry this same round without tools
         continue;
       }
-      throw new OpenRouterError(`OpenRouter returned ${resp.status}: ${text.slice(0, 300)}`);
+      throw err;
     }
-    const data = await resp.json();
     const reply = data?.choices?.[0]?.message;
     if (!reply) {
       throw new OpenRouterError(`Unexpected OpenRouter response: ${JSON.stringify(data).slice(0, 300)}`);
