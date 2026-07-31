@@ -215,3 +215,95 @@ test('onToolCalls fires once, before the first round of tool calls runs', () => 
     },
   );
 });
+
+// -- provider errors, including the ones that arrive as HTTP 200 -------------
+
+import { readError, backoffMs } from '../src/openrouter.js';
+
+const errBody = (code, message = 'Provider returned error') => ({ error: { message, code } });
+
+test('an error object in a 200 body is recognized, not treated as success', () => {
+  const resp = { ok: true, status: 200 };
+  assert.deepEqual(readError(resp, errBody(429), ''), {
+    status: 429, message: 'Provider returned error',
+  });
+});
+
+test('a real HTTP error is still recognized', () => {
+  assert.equal(readError({ ok: false, status: 401 }, { error: { message: 'bad key' } }, '').status, 401);
+});
+
+test('an error with no usable code is reported as a bad gateway, not success', () => {
+  assert.equal(readError({ ok: true, status: 200 }, { error: { message: 'who knows' } }, '').status, 502);
+});
+
+test('a healthy response reads as no error', () => {
+  assert.equal(readError({ ok: true, status: 200 }, { choices: [{ message: { content: 'hi' } }] }, ''), null);
+});
+
+test('a non-JSON body still yields the raw text as the message', () => {
+  assert.match(readError({ ok: false, status: 502 }, null, '<html>bad gateway</html>').message, /bad gateway/);
+});
+
+test('Retry-After wins over exponential backoff, and is capped', () => {
+  assert.equal(backoffMs(1, '2'), 2000);
+  assert.equal(backoffMs(1, '9999'), 8000);
+});
+
+test('backoff grows exponentially and is jittered', () => {
+  assert.equal(backoffMs(1, null, () => 0), 700);
+  assert.equal(backoffMs(2, null, () => 0), 1400);
+  assert.equal(backoffMs(3, null, () => 0), 2800);
+  assert.ok(backoffMs(1, null, () => 0.99) > 700);
+});
+
+test('a 429 delivered as HTTP 200 is retried rather than dropped', () => {
+  let calls = 0;
+  return withFetch(
+    async () => {
+      calls += 1;
+      return calls === 1
+        ? jsonResponse(errBody(429))
+        : jsonResponse({ choices: [{ message: { content: 'here you go' } }] });
+    },
+    async () => {
+      assert.equal(await chat([{ role: 'user', content: 'hi' }]), 'here you go');
+      assert.equal(calls, 2, 'expected exactly one retry');
+    },
+  );
+});
+
+test('background calls are not retried — they must not fight the conversation', () => {
+  let calls = 0;
+  return withFetch(
+    async () => { calls += 1; return jsonResponse(errBody(429)); },
+    async () => {
+      await assert.rejects(
+        chat([{ role: 'user', content: 'hi' }], { background: true }),
+        (err) => err instanceof OpenRouterError && /rate limited/.test(err.message),
+      );
+      assert.equal(calls, 1, 'background work retried when it should not have');
+    },
+  );
+});
+
+test('a rate limit says so, instead of "Unexpected OpenRouter response"', () => withFetch(
+  async () => jsonResponse(errBody(429)),
+  async () => {
+    await assert.rejects(
+      chat([{ role: 'user', content: 'hi' }], { background: true }),
+      (err) => /rate limited/.test(err.message) && !/Unexpected/.test(err.message),
+    );
+  },
+));
+
+test('a non-retryable error fails immediately', () => {
+  let calls = 0;
+  return withFetch(
+    async () => { calls += 1; return jsonResponse({ error: { message: 'bad key', code: 401 } }, 401); },
+    async () => {
+      await assert.rejects(chat([{ role: 'user', content: 'hi' }]), /401.*bad key/s);
+      assert.equal(calls, 1, 'a 401 should not be retried');
+    },
+  );
+});
