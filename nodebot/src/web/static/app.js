@@ -92,9 +92,27 @@ function confirmAction(text, onYes) {
 
 /* ---------- login ---------- */
 
-function showLogin() {
+async function showLogin() {
   $("#app").classList.add("hidden");
   $("#login-screen").classList.remove("hidden");
+  // Offer the Discord button only when the server actually has OAuth
+  // configured — otherwise it would just bounce people to a 503.
+  try {
+    const cfg = await api("/auth/config");
+    $("#login-discord").classList.toggle("hidden", !cfg.discord);
+    $("#login-discord-note").classList.toggle("hidden", !cfg.discord);
+    $("#login-password-label").textContent = cfg.discord
+      ? "or use the owner password" : "Enter the dashboard password";
+  } catch { /* leave password-only */ }
+
+  // Surface why a Discord sign-in bounced (no access, expired state, ...).
+  const err = new URLSearchParams(location.search).get("login_error");
+  if (err) {
+    const el = $("#login-error");
+    el.textContent = err;
+    el.classList.remove("hidden");
+    history.replaceState({}, "", location.pathname);
+  }
 }
 
 $("#login-form").addEventListener("submit", async (e) => {
@@ -130,6 +148,22 @@ async function init() {
     return;
   }
   state.me = me;
+  state.level = me.level || "none";
+  // Hide what this level can't use. The server enforces it regardless — this
+  // is so people aren't shown buttons that would only ever return 403.
+  const rank = { none: 0, moderator: 1, admin: 2, creator: 3 };
+  const can = (needed) => (rank[state.level] || 0) >= rank[needed];
+  document.querySelectorAll("#tabbar button").forEach((btn) => {
+    const needed = { settings: "admin", logs: "creator" }[btn.dataset.tab] || "moderator";
+    btn.classList.toggle("hidden", !can(needed));
+  });
+  if (!can({ settings: "admin", logs: "creator" }[state.tab] || "moderator")) {
+    state.tab = "overview";
+    document.querySelectorAll("#tabbar button").forEach((b) =>
+      b.classList.toggle("active", b.dataset.tab === "overview"));
+  }
+  $("#level-badge") && ($("#level-badge").textContent = state.level);
+
   state.guilds = await api("/guilds");
   const sel = $("#guild-select");
   sel.innerHTML = state.guilds
@@ -701,6 +735,9 @@ async function renderSettings() {
     api("/me"),
   ]);
   const textChannels = channels.filter((c) => c.type === "text");
+  // Bot/integration-managed roles can't be handed out to people, so they're
+  // no use as a dashboard-access group.
+  const allRoles = roles.filter((r) => !r.managed);
   const channelOptions = (selected) =>
     `<option value="">— none —</option>` + textChannels.map((c) =>
       `<option value="${c.id}" ${String(selected) === c.id ? "selected" : ""}>#${esc(c.name)}</option>`).join("");
@@ -731,6 +768,22 @@ async function renderSettings() {
         <input id="s-banned_words" value="${esc((settings.banned_words || []).join(", "))}"></label>
       <label class="field"><span class="lbl">Max mentions per message (0 = off)</span>
         <input id="s-max_mentions" type="number" min="0" value="${settings.max_mentions || 0}"></label>
+    </div>
+
+    <div class="section-title">Dashboard access</div>
+    <div class="card">
+      <label class="field"><span class="lbl">Roles with admin access (everything except this page's owner-only bits)</span>
+        <select id="s-dashboard_admin_roles" multiple size="5">${allRoles.map((r) =>
+          `<option value="${r.id}" ${(settings.dashboard_admin_roles || []).map(String).includes(r.id) ? "selected" : ""}>${esc(r.name)}</option>`).join("")}</select></label>
+      <label class="field"><span class="lbl">Roles with moderator access (members, warnings, mod log)</span>
+        <select id="s-dashboard_mod_roles" multiple size="5">${allRoles.map((r) =>
+          `<option value="${r.id}" ${(settings.dashboard_mod_roles || []).map(String).includes(r.id) ? "selected" : ""}>${esc(r.name)}</option>`).join("")}</select></label>
+      <span class="muted">People sign in with Discord and get the level their roles here give them —
+        no separate account list to keep in step. Admins can manage the AI (persona, models,
+        voice, automod); moderators can act on members but not reconfigure the bot.
+        Leave both empty and it falls back to Discord's own permissions: Manage Server
+        counts as admin, kick/ban/timeout as moderator. Whoever owns this instance
+        (OWNER_ID) is always full access and cannot be locked out.</span>
     </div>
 
     <div class="section-title">AI (OpenRouter)</div>
@@ -852,6 +905,8 @@ async function renderSettings() {
       deesc_enabled: $("#s-deesc_enabled").checked,
       deesc_harsh_language: $("#s-deesc_harsh_language").checked,
       ai_channels: [...$("#s-ai_channels").selectedOptions].map((o) => o.value),
+      dashboard_admin_roles: [...$("#s-dashboard_admin_roles").selectedOptions].map((o) => o.value),
+      dashboard_mod_roles: [...$("#s-dashboard_mod_roles").selectedOptions].map((o) => o.value),
       // Sent as the raw field text; the server parses the brackets (and still
       // accepts the old comma form, so nothing breaks mid-edit).
       voice_wake_words: $("#s-voice_wake_words").value,

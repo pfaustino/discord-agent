@@ -147,6 +147,13 @@ export const DEFAULTS = {
   ai_utility_model: null,
   // voice monitoring master switch (dashboard start/stop)
   voice_enabled: false,
+  // Dashboard access, mapped to this server's own Discord roles. Anyone in a
+  // listed role gets that level when they sign in with Discord. Leave both
+  // empty and the dashboard falls back to Discord permissions (Manage Server
+  // = admin, kick/ban/timeout = moderator) so it works before it is set up.
+  // OWNER_ID is always creator regardless, and cannot be locked out.
+  dashboard_admin_roles: [],
+  dashboard_mod_roles: [],
   // bot-wide presence, stored under guild id 0 by the dashboard
   presence_status: 'online',
   presence_activity_type: 'playing',

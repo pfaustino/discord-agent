@@ -177,6 +177,36 @@ Run the tests with `npm test` from `nodebot/`.
 
 Dashboard: http://localhost:8000
 
+### Dashboard access levels
+
+One instance runs one server, and dashboard access follows that server's own
+Discord roles — there's no second list of people to keep in step.
+
+| Level | Who | What they get |
+|---|---|---|
+| **creator** | `OWNER_ID`, plus the `DASHBOARD_PASSWORD` login | Everything, including the bot's global log, presence, and restart |
+| **admin** | Discord `Administrator`, or a role in `dashboard_admin_roles` | Everything for the server: persona, models, voice, automod, welcome, channels and roles |
+| **moderator** | A role in `dashboard_mod_roles` | Members, warnings, mod log, transcripts, quiet mode. Read-only on settings |
+
+People sign in with **Sign in with Discord**; the bot then looks them up in
+its own server over the gateway and reads their roles from there — never from
+anything the browser sent. Map the roles under **Settings → Dashboard access**.
+
+Leave both role lists empty and it falls back to Discord's own permissions, so
+a fresh install works before it's configured: Manage Server counts as admin,
+and kick/ban/timeout counts as moderator. Once you map roles, those become the
+source of truth. `OWNER_ID` is always creator and cannot be locked out, and the
+password login stays as break-glass if OAuth is misconfigured.
+
+To enable Discord login, add to the Discord Developer Portal → your app →
+OAuth2 → **Redirects**: `https://<your-dashboard>/api/auth/callback`, then set
+`DISCORD_CLIENT_SECRET` (and `PUBLIC_URL` if a proxy rewrites `Host`). Without
+the secret, the dashboard stays password-only.
+
+Levels are enforced per route on the server, not just hidden in the UI, and a
+route that doesn't declare a level is treated as creator-only — so a new one
+fails closed rather than open.
+
 ### Persona: two halves
 
 The system prompt is assembled from two separately editable settings, both on

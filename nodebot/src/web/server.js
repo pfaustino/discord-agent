@@ -17,9 +17,16 @@ import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
-import { ChannelType, ActivityType } from 'discord.js';
-import { BUILD_ID, PORT } from '../config.js';
-import { checkPassword, createToken, isAuthenticated, TOKEN_TTL } from './auth.js';
+import { ChannelType, ActivityType, PermissionsBitField } from 'discord.js';
+import { BUILD_ID, PORT, OWNER_ID } from '../config.js';
+import {
+  checkPassword, createToken, sessionOf, parseCookies,
+  createState, verifyState, TOKEN_TTL,
+} from './auth.js';
+import { LEVELS, levelAtLeast, resolveLevel, memberFacts } from './roles.js';
+import {
+  oauthConfigured, authorizeUrl, exchangeCode, fetchDiscordUser,
+} from './oauth.js';
 import { chat, OpenRouterError } from '../openrouter.js';
 import { PHRASE_LIST_KEYS, parsePhraseList } from '../phrases.js';
 import { logAction } from '../utils.js';
@@ -149,6 +156,39 @@ function getMember(guild, userId) {
   return member;
 }
 
+/**
+ * What dashboard access a Discord user gets, read from the server itself.
+ *
+ * The roles come from the bot's own gateway connection, never from anything
+ * the browser sent — the OAuth flow establishes *who* someone is, and this
+ * decides what that's worth here. One instance runs one server, but the loop
+ * is over guilds anyway so a bot sitting in a test server as well behaves
+ * sensibly: the best level found wins.
+ */
+async function levelForUser(client, userId) {
+  if (OWNER_ID && String(userId) === String(OWNER_ID)) return 'creator';
+  let best = 'none';
+  for (const guild of client.guilds.cache.values()) {
+    let member = guild.members.cache.get(String(userId));
+    if (!member) {
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        member = await guild.members.fetch(String(userId));
+      } catch {
+        continue; // not in this server
+      }
+    }
+    const level = resolveLevel({
+      ...memberFacts(member, PermissionsBitField),
+      ownerId: OWNER_ID,
+      adminRoles: db.getSetting(guild.id, 'dashboard_admin_roles') || [],
+      modRoles: db.getSetting(guild.id, 'dashboard_mod_roles') || [],
+    });
+    if (LEVELS[level] > LEVELS[best]) best = level;
+  }
+  return best;
+}
+
 // -- routes ------------------------------------------------------------------
 
 // Each entry: [method, pattern, handler, { open }]. `:name` captures a segment.
@@ -156,10 +196,13 @@ function getMember(guild, userId) {
 // cannot accidentally be added unauthenticated.
 function buildRoutes(client) {
   return [
+    // The password is the instance owner's way in, and stays creator-level.
+    // It is also the break-glass path: if Discord OAuth is misconfigured, or
+    // the role mapping locks everyone out, this still works.
     ['POST', '/api/login', async ({ body, res }) => {
       if (!checkPassword(body.password)) throw new HttpError(401, 'Wrong password');
-      sendJson(res, 200, { ok: true }, {
-        'Set-Cookie': `session=${createToken()}; Max-Age=${TOKEN_TTL}; Path=/; `
+      sendJson(res, 200, { ok: true, level: 'creator' }, {
+        'Set-Cookie': `session=${createToken('creator', OWNER_ID)}; Max-Age=${TOKEN_TTL}; Path=/; `
           + 'HttpOnly; SameSite=Lax; Secure',
       });
     }, { open: true }],
@@ -170,10 +213,67 @@ function buildRoutes(client) {
       });
     }, { open: true }],
 
-    ['GET', '/api/me', async () => {
-      if (!client.isReady()) return { ready: false };
+    // -- Sign in with Discord --------------------------------------------
+    // Kick off the flow. The signed `state` proves the callback belongs to a
+    // login this dashboard started, rather than one someone else initiated.
+    ['GET', '/api/auth/discord', async ({ req, res }) => {
+      if (!oauthConfigured()) throw new HttpError(503, 'Discord login is not configured');
+      const state = createState();
+      res.writeHead(302, {
+        Location: authorizeUrl(req, state),
+        'Set-Cookie': `oauth_state=${state}; Max-Age=600; Path=/; HttpOnly; SameSite=Lax; Secure`,
+      });
+      res.end();
+    }, { open: true }],
+
+    // Come back from Discord: verify state, learn who they are, then read
+    // their level from THIS server's roles via the bot's own connection —
+    // never from anything the browser supplied.
+    ['GET', '/api/auth/callback', async ({ query, req, res }) => {
+      const fail = (reason) => {
+        console.warn(`[web] Discord login rejected: ${reason}`);
+        res.writeHead(302, { Location: `/?login_error=${encodeURIComponent(reason)}` });
+        res.end();
+      };
+      if (!oauthConfigured()) return fail('Discord login is not configured');
+      if (!query.code) return fail(query.error_description || 'Discord returned no code');
+      if (!verifyState(query.state)
+          || parseCookies(req.headers.cookie).oauth_state !== query.state) {
+        return fail('Login session expired — try again');
+      }
+      let user;
+      try {
+        user = await fetchDiscordUser(await exchangeCode(query.code, req));
+      } catch (err) {
+        return fail(err.message);
+      }
+
+      const level = await levelForUser(client, user.id);
+      if (level === 'none') {
+        return fail(`${user.username} has no dashboard access in this server`);
+      }
+      console.log(`[web] ${user.username} (${user.id}) signed in as ${level}`);
+      res.writeHead(302, {
+        Location: '/',
+        'Set-Cookie': [
+          `session=${createToken(level, user.id)}; Max-Age=${TOKEN_TTL}; Path=/; HttpOnly; SameSite=Lax; Secure`,
+          'oauth_state=; Max-Age=0; Path=/; HttpOnly; SameSite=Lax; Secure',
+        ],
+      });
+      res.end();
+    }, { open: true }],
+
+    // What the browser needs before login: whether to offer the Discord button.
+    ['GET', '/api/auth/config', async () => ({
+      discord: oauthConfigured(),
+    }), { open: true }],
+
+    ['GET', '/api/me', async ({ session }) => {
+      if (!client.isReady()) return { ready: false, level: session?.level || 'none' };
       return {
         ready: true,
+        level: session?.level || 'none',
+        user_id: session?.userId || '',
         id: String(client.user.id),
         name: client.user.username,
         avatar: client.user.displayAvatarURL(),
@@ -186,7 +286,7 @@ function buildRoutes(client) {
           text: db.getSetting('0', 'presence_text'),
         },
       };
-    }],
+    }, { level: 'moderator' }],
 
     ['POST', '/api/presence', async ({ body }) => {
       db.setSetting('0', 'presence_status', body.status || 'online');
@@ -194,14 +294,14 @@ function buildRoutes(client) {
       db.setSetting('0', 'presence_text', body.text || '');
       applyPresence(client);
       return { ok: true };
-    }],
+    }, { level: 'creator' }],
 
     ['GET', '/api/guilds', async () => client.guilds.cache.map((g) => ({
       id: String(g.id),
       name: g.name,
       icon: g.iconURL(),
       member_count: g.memberCount,
-    }))],
+    })), { level: 'moderator' }],
 
     ['GET', '/api/guilds/:guildId', async ({ params }) => {
       const g = getGuild(client, params.guildId);
@@ -220,7 +320,7 @@ function buildRoutes(client) {
         created_at: Math.floor(g.createdTimestamp / 1000),
         quiet_mode: Boolean(db.getSetting(g.id, 'quiet_mode')),
       };
-    }],
+    }, { level: 'moderator' }],
 
     ['POST', '/api/guilds/:guildId/quiet', async ({ params, body }) => {
       const g = getGuild(client, params.guildId);
@@ -236,11 +336,11 @@ function buildRoutes(client) {
       await logAction(g, 'quiet_mode', DASHBOARD_ACTOR, null,
         on ? 'muted (podcast mode)' : 'unmuted');
       return { ok: true, quiet_mode: on };
-    }],
+    }, { level: 'moderator' }],
 
     ['GET', '/api/guilds/:guildId/settings', async ({ params }) => (
       db.getAllSettings(getGuild(client, params.guildId).id)
-    )],
+    ), { level: 'moderator' }],
 
     ['PUT', '/api/guilds/:guildId/settings', async ({ params, body }) => {
       const g = getGuild(client, params.guildId);
@@ -253,7 +353,7 @@ function buildRoutes(client) {
         db.setSetting(g.id, key, PHRASE_LIST_KEYS.has(key) ? parsePhraseList(value) : value);
       }
       return { ok: true };
-    }],
+    }, { level: 'admin' }],
 
     ['POST', '/api/guilds/:guildId/ai/enhance', async ({ params, body }) => {
       const g = getGuild(client, params.guildId);
@@ -270,7 +370,7 @@ function buildRoutes(client) {
         if (err instanceof OpenRouterError) throw new HttpError(502, err.message);
         throw err;
       }
-    }],
+    }, { level: 'admin' }],
 
     ['GET', '/api/guilds/:guildId/members', async ({ params, query }) => {
       const g = getGuild(client, params.guildId);
@@ -288,7 +388,7 @@ function buildRoutes(client) {
         total: members.length,
         members: members.slice(offset, offset + limit).map(serializeMember),
       };
-    }],
+    }, { level: 'moderator' }],
 
     ['POST', '/api/guilds/:guildId/members/:userId/action', async ({ params, body }) => {
       const g = getGuild(client, params.guildId);
@@ -326,7 +426,7 @@ function buildRoutes(client) {
         throw new HttpError(400, 'Unknown action');
       }
       return { ok: true };
-    }],
+    }, { level: 'moderator' }],
 
     ['POST', '/api/guilds/:guildId/members/:userId/roles', async ({ params, body }) => {
       const g = getGuild(client, params.guildId);
@@ -336,7 +436,7 @@ function buildRoutes(client) {
       await logAction(g, 'role_update', DASHBOARD_ACTOR, member,
         `+${body.add?.length || 0} -${body.remove?.length || 0}`);
       return { ok: true };
-    }],
+    }, { level: 'moderator' }],
 
     ['GET', '/api/guilds/:guildId/channels', async ({ params }) => {
       const g = getGuild(client, params.guildId);
@@ -344,7 +444,7 @@ function buildRoutes(client) {
         .sort((a, b) => ((a.parent?.position ?? -1) - (b.parent?.position ?? -1))
           || (a.position - b.position))
         .map(serializeChannel);
-    }],
+    }, { level: 'moderator' }],
 
     ['POST', '/api/guilds/:guildId/channels', async ({ params, body }) => {
       const g = getGuild(client, params.guildId);
@@ -360,7 +460,7 @@ function buildRoutes(client) {
       });
       await logAction(g, 'channel_create', DASHBOARD_ACTOR, channel.name, body.type);
       return serializeChannel(channel);
-    }],
+    }, { level: 'admin' }],
 
     ['DELETE', '/api/guilds/:guildId/channels/:channelId', async ({ params }) => {
       const g = getGuild(client, params.guildId);
@@ -370,7 +470,7 @@ function buildRoutes(client) {
       await channel.delete();
       await logAction(g, 'channel_delete', DASHBOARD_ACTOR, name, null);
       return { ok: true };
-    }],
+    }, { level: 'admin' }],
 
     ['POST', '/api/guilds/:guildId/channels/:channelId/messages', async ({ params, body }) => {
       const g = getGuild(client, params.guildId);
@@ -379,7 +479,7 @@ function buildRoutes(client) {
       if (!String(body.content || '').trim()) throw new HttpError(400, 'Message is empty');
       const message = await channel.send(String(body.content).slice(0, 2000));
       return { ok: true, message_id: String(message.id) };
-    }],
+    }, { level: 'admin' }],
 
     ['GET', '/api/guilds/:guildId/roles', async ({ params }) => {
       const g = getGuild(client, params.guildId);
@@ -387,7 +487,7 @@ function buildRoutes(client) {
         .filter((r) => r.id !== g.id) // @everyone
         .sort((a, b) => b.position - a.position)
         .map(serializeRole);
-    }],
+    }, { level: 'moderator' }],
 
     ['POST', '/api/guilds/:guildId/roles', async ({ params, body }) => {
       const g = getGuild(client, params.guildId);
@@ -399,7 +499,7 @@ function buildRoutes(client) {
       const role = await g.roles.create({ name: body.name, color });
       await logAction(g, 'role_create', DASHBOARD_ACTOR, role.name, null);
       return serializeRole(role);
-    }],
+    }, { level: 'admin' }],
 
     ['DELETE', '/api/guilds/:guildId/roles/:roleId', async ({ params }) => {
       const g = getGuild(client, params.guildId);
@@ -409,7 +509,7 @@ function buildRoutes(client) {
       await role.delete();
       await logAction(g, 'role_delete', DASHBOARD_ACTOR, name, null);
       return { ok: true };
-    }],
+    }, { level: 'admin' }],
 
     ['GET', '/api/guilds/:guildId/warnings', async ({ params, query }) => {
       const g = getGuild(client, params.guildId);
@@ -426,7 +526,7 @@ function buildRoutes(client) {
             : (String(row.moderator_id) === '0' ? DASHBOARD_ACTOR : String(row.moderator_id)),
         };
       });
-    }],
+    }, { level: 'moderator' }],
 
     ['DELETE', '/api/guilds/:guildId/warnings/:warningId', async ({ params }) => {
       const g = getGuild(client, params.guildId);
@@ -434,12 +534,12 @@ function buildRoutes(client) {
         throw new HttpError(404, 'Warning not found');
       }
       return { ok: true };
-    }],
+    }, { level: 'moderator' }],
 
     ['GET', '/api/guilds/:guildId/logs', async ({ params, query }) => {
       const g = getGuild(client, params.guildId);
       return db.getLogs(g.id, Math.max(1, Math.min(parseInt(query.limit, 10) || 100, 500)));
-    }],
+    }, { level: 'moderator' }],
 
     ['GET', '/api/guilds/:guildId/memory', async ({ params }) => {
       const g = getGuild(client, params.guildId);
@@ -451,14 +551,14 @@ function buildRoutes(client) {
         working: working.content,
         working_version: working.version,
       };
-    }],
+    }, { level: 'admin' }],
 
     ['DELETE', '/api/guilds/:guildId/memory', async ({ params }) => {
       const g = getGuild(client, params.guildId);
       db.clearMemory(g.id);
       await logAction(g, 'memory_wipe', DASHBOARD_ACTOR, null, 'memory wiped from dashboard');
       return { ok: true };
-    }],
+    }, { level: 'admin' }],
 
     ['POST', '/api/guilds/:guildId/voice/start', async ({ params }) => {
       const g = getGuild(client, params.guildId);
@@ -478,14 +578,14 @@ function buildRoutes(client) {
       ));
       await voice.joinRequestedChannel(target);
       return { ok: true, joined: target.name };
-    }],
+    }, { level: 'admin' }],
 
     ['POST', '/api/guilds/:guildId/voice/stop', async ({ params }) => {
       const g = getGuild(client, params.guildId);
       db.setSetting(g.id, 'voice_enabled', false);
       voice.leaveRequestedGuild(g);
       return { ok: true };
-    }],
+    }, { level: 'admin' }],
 
     ['GET', '/api/guilds/:guildId/transcripts', async ({ params }) => {
       const g = getGuild(client, params.guildId);
@@ -511,14 +611,14 @@ function buildRoutes(client) {
         listening: connection?.members?.me?.voice?.channel?.name || null,
         enabled: Boolean(db.getSetting(g.id, 'voice_enabled')),
       };
-    }],
+    }, { level: 'moderator' }],
 
     ['GET', '/api/logs', async ({ query }) => {
       const after = parseInt(query.after, 10) || 0;
       const limit = Math.min(parseInt(query.limit, 10) || 500, 1000);
       const entries = logbuffer.since(after, limit);
       return { entries, latest: entries.length ? entries[entries.length - 1].id : after };
-    }],
+    }, { level: 'creator' }],
 
     ['POST', '/api/bot/restart', async () => {
       // Exit the process; Railway's restart policy brings it back up.
@@ -530,7 +630,7 @@ function buildRoutes(client) {
       }
       setTimeout(() => process.exit(1), 1000).unref();
       return { ok: true };
-    }],
+    }, { level: 'creator' }],
   ];
 }
 
@@ -639,13 +739,29 @@ export function createDashboard(client) {
         if (req.method !== method) continue;
         const params = matchRoute(pattern, pathname);
         if (!params) continue;
-        if (!options?.open && !isAuthenticated(req)) {
-          sendJson(res, 401, { detail: 'Not authenticated' });
-          return;
+        let session = null;
+        if (!options?.open) {
+          session = sessionOf(req);
+          if (!session) {
+            sendJson(res, 401, { detail: 'Not authenticated' });
+            return;
+          }
+          // Fails closed: a route that forgets to declare a level is treated
+          // as creator-only rather than as open to any signed-in moderator.
+          // Same reasoning as routes being auth-protected unless marked open.
+          const required = options?.level || 'creator';
+          if (!levelAtLeast(session.level, required)) {
+            sendJson(res, 403, {
+              detail: `This needs ${required} access — you are signed in as ${session.level}.`,
+            });
+            return;
+          }
         }
         const body = ['POST', 'PUT', 'PATCH'].includes(method) ? await readBody(req) : {};
         const query = Object.fromEntries(url.searchParams);
-        const result = await handler({ params, body, query, req, res });
+        const result = await handler({
+          params, body, query, req, res, session,
+        });
         if (result !== undefined && !res.writableEnded) sendJson(res, 200, result);
         return;
       }
