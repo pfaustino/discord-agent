@@ -7,6 +7,7 @@ import { recordTurn, formatForPrompt } from './conversation.js';
 import { TOOL_SCHEMAS, runTool } from './tools.js';
 import { KB_TOOL_SCHEMAS, runTool as runKbTool } from './knowledge.js';
 import * as agentTools from './agentTools.js';
+import * as documents from './documents.js';
 import * as memory from './memory.js';
 import { MEMBER_NOTE, OWNER_NOTE } from './persona.js';
 import { isOwner } from './utils.js';
@@ -55,6 +56,14 @@ export async function handleMessage(client, message) {
   });
 
   await message.channel.sendTyping();
+  // Attachments are read automatically — no tool call — and folded into the
+  // user's message before it reaches the model, same as the Python bot.
+  let attachmentContext = '';
+  try {
+    attachmentContext = await documents.buildAttachmentContext(message);
+  } catch (err) {
+    console.warn('[documents] attachment context failed:', err?.message || err);
+  }
   const transcript = formatForPrompt(guildId, HISTORY_LIMIT);
   const basePrompt = db.getSetting(guildId, 'ai_system_prompt');
   // The speaker's own profile card comes first, then guild-wide durable and
@@ -69,7 +78,11 @@ export async function handleMessage(client, message) {
   try {
     const reply = await chat([
       { role: 'system', content: `${systemPrompt}\n\nRecent conversation:\n${transcript}` },
-      { role: 'user', content: `${message.author.username}: ${content || '(no text)'}` },
+      {
+        role: 'user',
+        content: `${message.author.username}: ${content || '(no text)'}`
+          + (attachmentContext ? `\n\n${attachmentContext}` : ''),
+      },
     ], {
       model, tools,
       toolHandler: toolHandler(client, message, owner),
