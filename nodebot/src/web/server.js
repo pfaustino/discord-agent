@@ -98,15 +98,36 @@ function sendJson(res, status, body, headers = {}) {
   res.end(payload);
 }
 
+// A dashboard request has no business being large; refuse rather than buffer.
+const MAX_BODY_BYTES = 1_000_000;
+// Once refused, the rest is drained so the client still gets its 413 — but a
+// client that keeps sending regardless gets the socket dropped rather than an
+// unbounded free ride.
+const MAX_DRAIN_BYTES = 8 * MAX_BODY_BYTES;
+
 async function readBody(req) {
-  const chunks = [];
+  let chunks = [];
   let size = 0;
+  let oversize = false;
   for await (const chunk of req) {
     size += chunk.length;
-    // A dashboard request has no business being large; refuse rather than buffer.
-    if (size > 1_000_000) throw new HttpError(413, 'Request body too large');
+    if (!oversize && size > MAX_BODY_BYTES) {
+      // Throwing straight out of `for await` destroys the request stream, and
+      // with it the socket the 413 is still being written to — fetch() sees a
+      // hung or aborted request with no status at all. So stop accumulating,
+      // drop what was buffered, and keep reading without retaining anything:
+      // memory stays flat however much more arrives, and the response gets a
+      // live socket to go out on.
+      oversize = true;
+      chunks = [];
+    }
+    if (oversize) {
+      if (size > MAX_DRAIN_BYTES) break;
+      continue;
+    }
     chunks.push(chunk);
   }
+  if (oversize) throw new HttpError(413, 'Request body too large');
   if (!chunks.length) return {};
   try {
     return JSON.parse(Buffer.concat(chunks).toString('utf8'));
