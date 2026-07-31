@@ -1,8 +1,12 @@
 # Discord Agent
 
-A Python Discord bot that manages your server end-to-end, with a mobile-friendly web
+A Node.js Discord bot that manages your server end-to-end, with a mobile-friendly web
 dashboard and AI chat powered by OpenRouter. Designed to deploy on Railway from GitHub
-as a single service (bot + dashboard in one process).
+as a single service (bot + dashboard + voice in one process).
+
+The bot lives in [`nodebot/`](nodebot/). The Python tree at the repo root is the
+previous implementation, kept for reference until it's deleted — it is never
+installed and never started.
 
 Docs: [overview](docs/overview.md) · [architecture](docs/architecture.md) ·
 [voice pipeline](docs/voice-pipeline.md) · [operations](docs/operations.md) ·
@@ -26,12 +30,9 @@ tools, wake pipeline, prompts, models, limitations, roadmap)
   and file contents at any ref, for reviewing contributor work together
   in chat. Read-only, no create/update/delete/merge call anywhere in that
   path — merging is always a human decision.
-- Repo sandbox (owner-only, for now): hand Max a repo link and, once you
-  confirm, he clones it into a disposable E2B cloud sandbox — never onto the
-  machine he runs on — installs it, runs it, screenshots what's running back
-  to the channel, edits files as you direct, and pushes to GitHub when you
-  tell him to. One sandbox per channel; needs `E2B_API_KEY` and
-  `GITHUB_WRITE_TOKEN`. Costs cents per session (usage-based).
+- Repo sandbox (E2B): **not available.** This existed in the Python bot and was
+  deliberately not carried over to Node — it never worked well in practice.
+  `E2B_API_KEY` and `GITHUB_WRITE_TOKEN` are unused.
 - Document review: drop a file on a message that mentions the bot (or in
   an always-on AI channel) — text, markdown, code, PDFs, and Word docs are
   read automatically and folded into the conversation so the bot can
@@ -72,14 +73,14 @@ tools, wake pipeline, prompts, models, limitations, roadmap)
   so nobody has to walk it through the same thing twice. Guild-wide, not
   tied to one person; `/knowledge` lists or searches it, and the owner can
   delete an entry
-- Voice monitoring (hybrid): a Node.js sidecar (`listener/`) joins occupied
-  voice channels — it speaks Discord's DAVE E2EE voice protocol via
-  discord.js, which Python libraries don't support yet — receives each
-  speaker separately, and streams utterances to the Python bot, which
-  transcribes them, flags banned words to the mod log, and joins the
-  conversation (text + TTS) when someone says a wake word — `/voicejoin`
-  `/voiceleave` `/wakewords` (needs `TRANSCRIPTION_API_KEY` and
-  `SECRET_KEY`; announces itself in the channel when it starts listening)
+- Voice monitoring (in-process): the bot joins occupied voice channels itself,
+  speaking Discord's DAVE E2EE voice protocol via discord.js, receives each
+  speaker separately, transcribes them, flags banned words to the mod log, and
+  joins the conversation (text + TTS) when someone says a wake word —
+  `/voicejoin` `/voiceleave` (needs `TRANSCRIPTION_API_KEY`). Text and voice
+  share one conversation buffer, so asking about something in voice that was
+  said in text works, and vice versa. The old `listener/` sidecar and the HTTP
+  bridge it needed are gone — no second process, no `SIDECAR_PORT`.
 - Welcome/goodbye messages + autorole for new members
 - Automod: banned words, invite-link blocking, mention-spam limits
 - Mod log channel + persistent action history
@@ -117,14 +118,13 @@ Create a key at [openrouter.ai/keys](https://openrouter.ai/keys) — this is `OP
    | Variable | Value |
    |---|---|
    | `DISCORD_TOKEN` | your bot token |
+   | `CLIENT_ID` | your Discord **application ID** — required to register slash commands |
    | `OWNER_ID` | your Discord user ID (management commands are owner-only) |
    | `OPENROUTER_API_KEY` | your OpenRouter key |
    | `DASHBOARD_PASSWORD` | password for the dashboard |
    | `SECRET_KEY` | any long random string |
-   | `DATABASE_PATH` | `/data/bot.db` |
+   | `DATABASE_PATH` | `/data/nodebot.db` |
    | `GITHUB_TOKEN` | *(optional)* GitHub token — raises the repo-analysis API rate limit |
-   | `E2B_API_KEY` | *(optional)* [e2b.dev](https://e2b.dev) key — enables the repo sandbox tools |
-   | `GITHUB_WRITE_TOKEN` | *(optional)* GitHub token with push access — lets the sandbox push changes |
    | `TRANSCRIPTION_API_KEY` | *(optional)* OpenAI or Groq key — enables voice monitoring |
    | `FISH_API_KEY` | *(optional)* fish.audio key — natural TTS voice for spoken replies |
    | `FISH_VOICE_ID` | *(optional)* fish.audio voice model reference id to speak with |
@@ -139,15 +139,31 @@ from there.
 
 ### Run locally
 
+Needs Node 22+ (the bot uses `node:sqlite`, which is built in) and `ffmpeg` on
+PATH for TTS playback.
+
 ```bash
-python -m venv .venv
-.venv\Scripts\activate        # Windows (source .venv/bin/activate on mac/linux)
-pip install -r requirements.txt
-copy .env.example .env        # fill it in, then load it into your shell
-python main.py
+cd nodebot
+npm install
+cp .env.example .env          # fill it in
+npm run deploy-commands       # register slash commands (needs CLIENT_ID)
+npm start
 ```
 
+Run the tests with `npm test` from `nodebot/`.
+
 Dashboard: http://localhost:8000
+
+### Migrating from the Python bot
+
+Settings (persona, welcome messages, banned words, log channel, autorole,
+model override, wake words) carry across; chat history and memories do not:
+
+```bash
+node nodebot/src/migrate-settings.js --from /data/bot.db --to /data/nodebot.db
+```
+
+Add `--dry-run` to see what would move without writing anything.
 
 > Note: locally the session cookie is marked `secure`, which most browsers still accept
 > on `localhost`. Slash commands are synced per-guild on startup, so they appear
