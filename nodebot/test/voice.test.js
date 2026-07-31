@@ -4,6 +4,7 @@ import {
   matchesAny, describeToolCalls, isPass,
   isFollowUpOpen, openFollowUp, closeFollowUp, _resetForTests,
 } from '../src/voice.js';
+import { normalizePhrase } from '../src/phrases.js';
 import {
   VOICE_STOP_SPEAKING_WORDS, VOICE_STOP_LISTENING_WORDS,
 } from '../src/config.js';
@@ -124,12 +125,13 @@ test('the default stop-listening phrases match how people actually say them', ()
   }
 });
 
-test('stop phrases contain no punctuation, which could never match', () => {
-  // matchesAny() strips non-alphanumerics from the transcript but not from
-  // the phrase list, so an apostrophe in a default is a phrase that is dead
-  // on arrival ("that's all max" vs the normalized "that s all max").
+test('the default stop phrases are already in canonical form', () => {
+  // matchesAny() now normalizes both sides, so punctuation in a phrase is no
+  // longer fatal — but a default that isn't already canonical is a default
+  // that doesn't read the way it will be stored and shown back on the
+  // dashboard. Keep them written the way they end up.
   for (const w of [...VOICE_STOP_SPEAKING_WORDS, ...VOICE_STOP_LISTENING_WORDS]) {
-    assert.match(w, /^[a-z0-9 ]+$/, `unmatchable phrase: ${w}`);
+    assert.equal(normalizePhrase(w), w, `not in canonical form: ${w}`);
   }
 });
 

@@ -21,6 +21,7 @@ import { ChannelType, ActivityType } from 'discord.js';
 import { BUILD_ID, PORT } from '../config.js';
 import { checkPassword, createToken, isAuthenticated, TOKEN_TTL } from './auth.js';
 import { chat, OpenRouterError } from '../openrouter.js';
+import { PHRASE_LIST_KEYS, parsePhraseList } from '../phrases.js';
 import { logAction } from '../utils.js';
 import * as logbuffer from '../logbuffer.js';
 import * as voice from '../voice.js';
@@ -245,7 +246,11 @@ function buildRoutes(client) {
       const g = getGuild(client, params.guildId);
       for (const [key, value] of Object.entries(body)) {
         if (!(key in db.DEFAULTS)) throw new HttpError(400, `Unknown setting: ${key}`);
-        db.setSetting(g.id, key, value);
+        // Phrase lists arrive from the dashboard as raw bracket text
+        // ("[hey max] [hey andrew]") and from the API as an array. Both are
+        // parsed to a clean, normalized array before storage, so what is
+        // saved is exactly what the matcher will compare against.
+        db.setSetting(g.id, key, PHRASE_LIST_KEYS.has(key) ? parsePhraseList(value) : value);
       }
       return { ok: true };
     }],

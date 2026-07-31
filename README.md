@@ -91,6 +91,12 @@ tools, wake pipeline, prompts, models, limitations, roadmap)
   is per-server and editable from the dashboard (`voice_followup_enabled`,
   `voice_followup_window_sec`, `voice_stop_speaking_words`,
   `voice_stop_listening_words`); set the window to `0` to turn it off.
+- Phrases, not words: wake / cancel / stop lists are entered on the dashboard
+  as `[hey max] [max, you around?] [yo max]` — one phrase per bracket pair, so
+  a phrase can contain a comma. The old comma-separated form still parses, so
+  nothing breaks mid-edit. Capitals and punctuation are ignored on both sides
+  when matching, and what's stored is the tidied-up version, so what you see
+  on the dashboard is exactly what gets compared.
 - Welcome/goodbye messages + autorole for new members
 - Automod: banned words, invite-link blocking, mention-spam limits
 - Mod log channel + persistent action history

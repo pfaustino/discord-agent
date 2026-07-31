@@ -304,3 +304,50 @@ test('saving the settings tab payload succeeds, ai_channels included', () => wit
   assert.deepEqual(settings.ai_channels, ['123', '456']);
   assert.equal(settings.automod_enabled, true);
 }));
+
+// -- phrase lists arrive from the dashboard as bracket text -------------------
+
+test('bracket text is parsed into a phrase list on save', () => withServer(async (call) => {
+  const res = await call('PUT', '/api/guilds/111/settings', {
+    cookie: authCookie(),
+    body: { voice_wake_words: '[hey max] [max, you around?]' },
+  });
+  assert.equal(res.status, 200);
+  const settings = await (await call('GET', '/api/guilds/111/settings', { cookie: authCookie() })).json();
+  // The comma stays inside the phrase instead of splitting it in two.
+  assert.deepEqual(settings.voice_wake_words, ['hey max', 'max you around']);
+}));
+
+test('an array still works, so the API contract is unchanged', () => withServer(async (call) => {
+  await call('PUT', '/api/guilds/111/settings', {
+    cookie: authCookie(),
+    body: { voice_cancel_words: ['Never Mind', 'forget it'] },
+  });
+  const settings = await (await call('GET', '/api/guilds/111/settings', { cookie: authCookie() })).json();
+  assert.deepEqual(settings.voice_cancel_words, ['never mind', 'forget it']);
+}));
+
+test('all four phrase lists save from the dashboard', () => withServer(async (call) => {
+  const res = await call('PUT', '/api/guilds/111/settings', {
+    cookie: authCookie(),
+    body: {
+      voice_wake_words: '[hey max]',
+      voice_cancel_words: '[never mind]',
+      voice_stop_speaking_words: '[max stop speaking]',
+      voice_stop_listening_words: '[max stop listening]',
+    },
+  });
+  assert.equal(res.status, 200);
+  const s = await (await call('GET', '/api/guilds/111/settings', { cookie: authCookie() })).json();
+  assert.deepEqual(s.voice_stop_speaking_words, ['max stop speaking']);
+  assert.deepEqual(s.voice_stop_listening_words, ['max stop listening']);
+}));
+
+test('a non-phrase setting is not mangled by the phrase parser', () => withServer(async (call) => {
+  await call('PUT', '/api/guilds/111/settings', {
+    cookie: authCookie(),
+    body: { welcome_message: 'Welcome {user}, glad you made it!' },
+  });
+  const s = await (await call('GET', '/api/guilds/111/settings', { cookie: authCookie() })).json();
+  assert.equal(s.welcome_message, 'Welcome {user}, glad you made it!');
+}));

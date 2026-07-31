@@ -20,6 +20,7 @@ import { chat, OpenRouterError } from './openrouter.js';
 import { recordTurn, formatForPrompt } from './conversation.js';
 import { VOICE_PROMPT, VOICE_OWNER_ACTION_NOTE, VOICE_PASS } from './persona.js';
 import { buildSystemPrompt } from './systemPrompt.js';
+import { normalizePhrase } from './phrases.js';
 import * as transcription from './transcription.js';
 import * as tts from './tts.js';
 import { TOOL_SCHEMAS, runTool } from './tools.js';
@@ -148,8 +149,17 @@ function voiceChannels(guild) {
 }
 
 export function matchesAny(text, words) {
-  const normalized = text.toLowerCase().replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim();
-  return words.some((w) => normalized.includes(w));
+  // Both sides get normalized. Normalizing only the transcript — which this
+  // did until phrases could contain punctuation — meant any phrase with a
+  // comma or apostrophe in it could never match: "Max, are you there?"
+  // normalizes to "max are you there", which does not contain the literal
+  // needle "max, are you there".
+  const normalized = normalizePhrase(text);
+  if (!normalized) return false;
+  return (words || []).some((w) => {
+    const needle = normalizePhrase(w);
+    return needle && normalized.includes(needle);
+  });
 }
 
 // -- join/leave/rebalance (ported from listener/index.js) -------------------

@@ -43,6 +43,13 @@ function esc(s) {
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
+// Phrase lists display as [one] [per] [bracket]. Parsing the way back is the
+// server's job (src/phrases.js) — this direction is trivial and needs no
+// second implementation.
+function brackets(list) {
+  return (Array.isArray(list) ? list : []).map((p) => `[${p}]`).join(" ");
+}
+
 function toast(msg, isError = false) {
   const el = $("#toast");
   el.textContent = msg;
@@ -743,14 +750,24 @@ async function renderSettings() {
 
     <div class="section-title">Voice</div>
     <div class="card">
-      <label class="field"><span class="lbl">Wake words (comma-separated)</span>
-        <input id="s-voice_wake_words" value="${esc((settings.voice_wake_words || []).join(", "))}"
-          placeholder="hey max, yo max"></label>
+      <label class="field"><span class="lbl">Wake words</span>
+        <input id="s-voice_wake_words" value="${esc(brackets(settings.voice_wake_words))}"
+          placeholder="[hey max] [yo max]"></label>
       <label class="field"><span class="lbl">Cancel words (abort a pending reply)</span>
-        <input id="s-voice_cancel_words" value="${esc((settings.voice_cancel_words || []).join(", "))}"
-          placeholder="never mind, forget it, cancel that"></label>
-      <span class="muted">Say a wake word to pull the bot into the conversation;
-        a cancel word right after calls it off before he answers.</span>
+        <input id="s-voice_cancel_words" value="${esc(brackets(settings.voice_cancel_words))}"
+          placeholder="[never mind] [forget it] [cancel that]"></label>
+      <label class="field"><span class="lbl">Stop speaking (cut him off, stay in the conversation)</span>
+        <input id="s-voice_stop_speaking_words" value="${esc(brackets(settings.voice_stop_speaking_words))}"
+          placeholder="[max stop speaking] [max be quiet]"></label>
+      <label class="field"><span class="lbl">Stop listening (end the conversation)</span>
+        <input id="s-voice_stop_listening_words" value="${esc(brackets(settings.voice_stop_listening_words))}"
+          placeholder="[max stop listening] [max go to sleep]"></label>
+      <span class="muted">Put each phrase in its own [brackets] — that way a phrase
+        can contain a comma, like [max, you around?]. Punctuation and capitals are
+        ignored when matching, so what you save is the tidied-up version.
+        Say a wake word to pull the bot into the conversation; a cancel word right
+        after calls it off before he answers. Once he's spoken he keeps listening
+        for a follow-up, until someone tells him to stop speaking or stop listening.</span>
     </div>
 
     <div class="section-title">Proactive speech (pressure engine)</div>
@@ -835,10 +852,12 @@ async function renderSettings() {
       deesc_enabled: $("#s-deesc_enabled").checked,
       deesc_harsh_language: $("#s-deesc_harsh_language").checked,
       ai_channels: [...$("#s-ai_channels").selectedOptions].map((o) => o.value),
-      voice_wake_words: $("#s-voice_wake_words").value.split(",")
-        .map((w) => w.trim().toLowerCase()).filter(Boolean),
-      voice_cancel_words: $("#s-voice_cancel_words").value.split(",")
-        .map((w) => w.trim().toLowerCase()).filter(Boolean),
+      // Sent as the raw field text; the server parses the brackets (and still
+      // accepts the old comma form, so nothing breaks mid-edit).
+      voice_wake_words: $("#s-voice_wake_words").value,
+      voice_cancel_words: $("#s-voice_cancel_words").value,
+      voice_stop_speaking_words: $("#s-voice_stop_speaking_words").value,
+      voice_stop_listening_words: $("#s-voice_stop_listening_words").value,
       log_channel: $("#s-log_channel").value || null,
     };
     await api(`/guilds/${state.guildId}/settings`, { method: "PUT", body });

@@ -3,6 +3,13 @@
 // OpenAI-compatible /audio/transcriptions endpoint.
 import { TRANSCRIPTION_API_KEY, TRANSCRIPTION_API_URL, TRANSCRIPTION_MODEL } from './config.js';
 
+// Retries for transient upstream failures (Cloudflare 502s in front of the
+// API, rate limits, dropped connections). Deliberately short and few — a
+// wake word answered ten seconds late is worse than one missed.
+const RETRYABLE_STATUSES = new Set([408, 429, 500, 502, 503, 504]);
+const MAX_ATTEMPTS = 3;
+const RETRY_BACKOFF_MS = 400;
+
 const SAMPLE_RATE = 48000;
 const CHANNELS = 2;
 const SAMPLE_WIDTH = 2;
@@ -51,21 +58,45 @@ export async function transcribePcm(pcm) {
   form.append('model', TRANSCRIPTION_MODEL);
   form.append('response_format', 'json');
 
-  let resp;
-  try {
-    resp = await fetch(url, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${TRANSCRIPTION_API_KEY}` },
-      body: form,
-    });
-  } catch (err) {
-    console.warn('[transcription] request failed:', err.message);
-    return '';
+  // A failed transcription is a lost utterance — Max simply never hears what
+  // was said, with nothing to tell the speaker why. Transient upstream
+  // failures are common enough to be worth a couple of quick retries: a
+  // Cloudflare 502 in front of the API, a 429, a dropped connection. Kept
+  // short and few, because a wake word answered ten seconds late is worse
+  // than one missed.
+  let resp = null;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      resp = await fetch(url, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${TRANSCRIPTION_API_KEY}` },
+        body: form,
+      });
+    } catch (err) {
+      resp = null;
+      if (attempt === MAX_ATTEMPTS) {
+        console.warn('[transcription] request failed:', err.message);
+        return '';
+      }
+    }
+    if (resp?.ok) break;
+
+    const status = resp?.status;
+    const retryable = !resp || RETRYABLE_STATUSES.has(status);
+    if (!retryable || attempt === MAX_ATTEMPTS) {
+      if (resp) {
+        // eslint-disable-next-line no-await-in-loop
+        console.warn(`[transcription] API ${status}: ${(await resp.text()).slice(0, 200)}`);
+      }
+      return '';
+    }
+    console.warn(`[transcription] ${status ?? 'network error'} — retrying (${attempt}/${MAX_ATTEMPTS - 1})`);
+    // eslint-disable-next-line no-await-in-loop
+    await new Promise((r) => { setTimeout(r, RETRY_BACKOFF_MS * attempt); });
   }
-  if (!resp.ok) {
-    console.warn(`[transcription] API ${resp.status}: ${(await resp.text()).slice(0, 200)}`);
-    return '';
-  }
+  if (!resp?.ok) return '';
+
   let text;
   try {
     text = ((await resp.json()).text || '').trim();

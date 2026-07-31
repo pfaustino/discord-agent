@@ -1,4 +1,6 @@
 import 'dotenv/config';
+// phrases.js imports nothing, so this cannot cycle back through config.
+import { parsePhraseList } from './phrases.js';
 
 // Process start stamp — stamped into dashboard asset URLs to defeat browser
 // caching, and shown as the dashboard build id.
@@ -44,32 +46,38 @@ export const FISH_VOICE_ID = process.env.FISH_VOICE_ID || '';
 
 // Env-configured fallback defaults (used to seed db.js's DEFAULTS) — the
 // live, per-guild values come from db.getSetting(guildId, 'voice_wake_words'
-// / 'voice_cancel_words') once a guild has its own settings row. Same
-// defaults as the Python bot's db.py DEFAULTS.
-export const VOICE_WAKE_WORDS = (process.env.VOICE_WAKE_WORDS || 'hey max,hey andrew')
-  .split(',').map((w) => w.trim().toLowerCase()).filter(Boolean);
-export const VOICE_CANCEL_WORDS = (process.env.VOICE_CANCEL_WORDS
-  || 'never mind,nevermind,forget it,forget about it,cancel that,scratch that')
-  .split(',').map((w) => w.trim().toLowerCase()).filter(Boolean);
+// / 'voice_cancel_words') once a guild has its own settings row.
+//
+// parsePhraseList accepts both forms, so these env vars take either the
+// bracket form the dashboard now uses — [hey max] [max, you around?] — or the
+// original comma-separated list. Brackets are the one to reach for when a
+// phrase needs a comma in it.
+export const VOICE_WAKE_WORDS = parsePhraseList(
+  process.env.VOICE_WAKE_WORDS || 'hey max,hey andrew',
+);
+export const VOICE_CANCEL_WORDS = parsePhraseList(
+  process.env.VOICE_CANCEL_WORDS
+  || 'never mind,nevermind,forget it,forget about it,cancel that,scratch that',
+);
 
 // Follow-up mode end phrases. Two different things, deliberately:
 // "stop speaking" is barge-in (shut up now, but stay in the conversation);
 // "stop listening" ends the conversation (finish the sentence, then go back
 // to needing the wake word).
 //
-// No apostrophes or punctuation in these defaults: voice.js's matchesAny()
-// strips non-alphanumerics from the transcript before comparing, but NOT
-// from the phrase list, so "that's all max" could never match anything.
-// They are also all multi-word — matching is substring-based, so a bare
-// "stop" would fire inside "stopping".
-export const VOICE_STOP_SPEAKING_WORDS = (process.env.VOICE_STOP_SPEAKING_WORDS
+// Written already-normalized (lowercase, no punctuation) so they read the way
+// they are stored and shown back on the dashboard. All multi-word too, since
+// matching is substring-based and a bare "stop" would fire inside "stopping".
+export const VOICE_STOP_SPEAKING_WORDS = parsePhraseList(
+  process.env.VOICE_STOP_SPEAKING_WORDS
   || 'max stop speaking,max stop talking,stop speaking max,stop talking max,'
-  + 'max be quiet,max shut up,max quiet down')
-  .split(',').map((w) => w.trim().toLowerCase()).filter(Boolean);
-export const VOICE_STOP_LISTENING_WORDS = (process.env.VOICE_STOP_LISTENING_WORDS
+  + 'max be quiet,max shut up,max quiet down',
+);
+export const VOICE_STOP_LISTENING_WORDS = parsePhraseList(
+  process.env.VOICE_STOP_LISTENING_WORDS
   || 'max stop listening,stop listening max,max go to sleep,max we are done,'
-  + 'max that is all,thanks max that is all')
-  .split(',').map((w) => w.trim().toLowerCase()).filter(Boolean);
+  + 'max that is all,thanks max that is all',
+);
 
 // How long after Max finishes speaking he keeps answering without the wake
 // word. 0 disables follow-up mode outright. Per-guild override lives in
