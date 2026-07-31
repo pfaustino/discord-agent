@@ -238,6 +238,12 @@ async function renderOverview() {
       <div class="muted">${me.guild_count} server(s) · ${me.latency_ms}ms · build ${esc(me.build || "?")}</div></div>
       <span class="badge ok">online</span>
     </div>
+    <div class="card" style="margin-top:10px;display:flex;align-items:center;gap:12px">
+      <span style="font-size:20px">&#x1F310;</span>
+      <div class="grow"><div style="font-weight:600">Showcase site</div>
+      <div class="muted">The public marketing page, pricing tiers and bot builder.</div></div>
+      <a class="btn ghost" href="/site/" target="_blank" rel="noopener">Open</a>
+    </div>
     ${g.quiet_mode ? `
     <div class="card" style="margin-top:10px;border:1px solid var(--danger)">
       <div style="font-weight:700">🔇 Muted (podcast mode)</div>
