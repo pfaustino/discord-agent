@@ -81,6 +81,16 @@ tools, wake pipeline, prompts, models, limitations, roadmap)
   share one conversation buffer, so asking about something in voice that was
   said in text works, and vice versa. The old `listener/` sidecar and the HTTP
   bridge it needed are gone — no second process, no `SIDECAR_PORT`.
+- Follow-up mode: the wake word only has to be said **once**. For 25 seconds
+  after Max finishes speaking, anyone in the channel can just keep talking and
+  he answers, and every real answer re-arms the window — so a conversation
+  carries on the way it would with a person. Two ways to end it: **"Max, stop
+  speaking"** cuts him off mid-sentence but stays in the conversation, and
+  **"Max, stop listening"** ends it and puts the wake word back. If what he
+  hears in the window plainly wasn't meant for him, he stays quiet. All of it
+  is per-server and editable from the dashboard (`voice_followup_enabled`,
+  `voice_followup_window_sec`, `voice_stop_speaking_words`,
+  `voice_stop_listening_words`); set the window to `0` to turn it off.
 - Welcome/goodbye messages + autorole for new members
 - Automod: banned words, invite-link blocking, mention-spam limits
 - Mod log channel + persistent action history

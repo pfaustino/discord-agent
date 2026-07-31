@@ -255,6 +255,12 @@ async function maybeSpeak(guild, engine, now) {
 }
 
 async function draftAndSpeak(guild, engine, channel, cand, now) {
+  // Checked before drafting, not before speaking: bailing after generation
+  // would still have paid for a line nobody ever hears.
+  if (await inLiveConversation(channel)) {
+    console.log(`[proactive] holding off in #${channel.name} — already mid-conversation`);
+    return;
+  }
   const evidence = engine.store.signals('active')
     .filter((s) => s.topic === cand.topic && strength(s, now) > 0)
     .map((s) => `- ${s.source}: ${s.evidence || '(no detail)'}`)
@@ -347,6 +353,23 @@ async function draftAndSpeak(guild, engine, channel, cand, now) {
     } catch (err) {
       console.error('[proactive] voice playback failed:', err?.message || err);
     }
+  }
+}
+
+/** Is Max mid-conversation in this voice channel right now?
+ *
+ * speakInVoice() silently returns false when the player is busy, so an
+ * unprompted line landing during a live back-and-forth doesn't interrupt —
+ * it just vanishes, having already been generated and paid for. Follow-up
+ * mode makes that far more likely, so proactive speech stands down instead:
+ * he's already talking to them, which is what pressure wanted. */
+async function inLiveConversation(channel) {
+  if (channel?.type !== ChannelType.GuildVoice) return false;
+  try {
+    const voice = await import('./voice.js');
+    return voice.isFollowUpOpen(channel.id);
+  } catch {
+    return false;
   }
 }
 

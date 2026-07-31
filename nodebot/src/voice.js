@@ -18,7 +18,7 @@ import prism from 'prism-media';
 import { MIN_UTTERANCE_SEC, MIN_UTTERANCE_RMS } from './config.js';
 import { chat, OpenRouterError } from './openrouter.js';
 import { recordTurn, formatForPrompt } from './conversation.js';
-import { VOICE_PROMPT, VOICE_OWNER_ACTION_NOTE } from './persona.js';
+import { VOICE_PROMPT, VOICE_OWNER_ACTION_NOTE, VOICE_PASS } from './persona.js';
 import * as transcription from './transcription.js';
 import * as tts from './tts.js';
 import { TOOL_SCHEMAS, runTool } from './tools.js';
@@ -39,6 +39,10 @@ const MIN_RMS = MIN_UTTERANCE_RMS;        // loudness floor
 const STUCK_CONNECTION_MS = 60_000;
 const WAKE_COOLDOWN_MS = 8_000;
 const WAKE_GRACE_MS = 1_000;              // window for an instant "never mind"
+// Ceiling on waiting for TTS playback to finish before arming the follow-up
+// window. Only a backstop against a wedged player — a spoken reply is
+// seconds, not minutes.
+const PLAYBACK_WAIT_MS = 120_000;
 const REPEAT_SUPPRESS_MS = 45_000;
 const REPEAT_MAX_CHARS = 30;
 const CONTEXT_TURNS = 40;
@@ -92,6 +96,47 @@ const notReadySince = new Map();     // guildId -> ms timestamp connection left 
 const lastWake = new Map();          // channelId -> ms timestamp
 const lastText = new Map();          // userId -> [normalizedText, ms timestamp]
 const pendingWake = new Map();       // channelId -> { cancelled, controller }
+const followUpUntil = new Map();     // channelId -> ms timestamp the window shuts
+// Bumped whenever a window is force-closed. respond() captures the value on
+// entry and armFollowUp() refuses to re-arm if it has changed since — so
+// "Max, stop listening" said while he is still speaking actually sticks,
+// instead of being undone by the arm that fires when playback ends.
+const followUpEpoch = new Map();     // channelId -> int
+
+/** Is the follow-up window open on this channel — i.e. can someone speak to
+ * Max right now without saying the wake word? */
+export function isFollowUpOpen(channelId, now = Date.now()) {
+  return now < (followUpUntil.get(channelId) || 0);
+}
+
+/** Open (or extend) the window: for the next `seconds`, anyone in this
+ * channel is talking to Max without needing the wake word. */
+export function openFollowUp(channelId, seconds, now = Date.now()) {
+  if (!(seconds > 0)) return false;
+  followUpUntil.set(channelId, now + seconds * 1000);
+  return true;
+}
+
+/** End the conversation: back to requiring the wake word. */
+export function closeFollowUp(channelId) {
+  followUpUntil.delete(channelId);
+  followUpEpoch.set(channelId, (followUpEpoch.get(channelId) || 0) + 1);
+}
+
+/** Cut Max off mid-sentence: kill playback and abort anything in flight.
+ * Deliberately leaves the follow-up window alone — "stop speaking" means
+ * drop this answer, not leave the conversation. */
+export function stopSpeaking(guild, channelId) {
+  const pending = pendingWake.get(channelId);
+  if (pending) {
+    pending.cancelled = true;
+    clearTimeout(pending.timer);
+    pending.controller?.abort();
+    pendingWake.delete(channelId);
+  }
+  const player = players.get(guild.id);
+  if (player && player.state.status !== AudioPlayerStatus.Idle) player.stop(true);
+}
 
 function humanCount(channel) {
   return channel.members.filter((m) => !m.user.bot).size;
@@ -151,6 +196,9 @@ async function joinChannel(channel) {
 function leaveGuild(guild) {
   const connection = getVoiceConnection(guild.id);
   if (!connection) return;
+  // Leaving ends any conversation that was still live, so rejoining later
+  // starts from the wake word rather than answering the first thing it hears.
+  for (const c of voiceChannels(guild).values()) closeFollowUp(c.id);
   connection.destroy();
   players.delete(guild.id);
 }
@@ -295,12 +343,20 @@ async function handleUtterance(guild, channel, userId, pcm) {
   const text = await transcription.transcribePcm(pcm);
   if (!text) return;
 
+  // Resolved before the repeat suppressor below, which would otherwise eat
+  // them: "max stop" is well under REPEAT_MAX_CHARS, so saying it twice in a
+  // row — exactly what someone does when the first one seems not to have
+  // landed — would see the second discarded as a noise blip.
+  const stopsSpeaking = matchesAny(text, db.getSetting(guild.id, 'voice_stop_speaking_words'));
+  const stopsListening = matchesAny(text, db.getSetting(guild.id, 'voice_stop_listening_words'));
+
   // Repeated short phrases from the same user in quick succession are
   // noise-gate hallucinations, not someone actually talking.
   const normalized = text.toLowerCase().split(/\s+/).join(' ');
   const prev = lastText.get(userId);
   const now = Date.now();
-  if (prev && prev[0] === normalized && normalized.length <= REPEAT_MAX_CHARS
+  if (!stopsSpeaking && !stopsListening
+      && prev && prev[0] === normalized && normalized.length <= REPEAT_MAX_CHARS
       && now - prev[1] < REPEAT_SUPPRESS_MS) {
     lastText.set(userId, [normalized, now]);
     console.log(`[voice] dropped repeated blip from ${name}: ${text}`);
@@ -319,6 +375,23 @@ async function handleUtterance(guild, channel, userId, pcm) {
     .then((proactive) => proactive.feedVoice(guild, channel.id, userId, name, text))
     .catch((err) => console.error('[voice] pressure feed failed:', err?.message || err));
 
+  // "Max, stop speaking" — barge in. Kills playback and anything in flight,
+  // but stays in the conversation, so the next thing said still reaches him.
+  if (stopsSpeaking) {
+    stopSpeaking(guild, channel.id);
+    console.log(`[voice] [#${channel.name}] cut off by ${name}: ${text}`);
+    return;
+  }
+
+  // "Max, stop listening" — end the conversation. Whatever is already
+  // playing gets to finish its sentence; what stops is him treating the next
+  // utterance as his to answer.
+  if (stopsListening) {
+    closeFollowUp(channel.id);
+    console.log(`[voice] [#${channel.name}] follow-up ended by ${name}: ${text}`);
+    return;
+  }
+
   // Cancel words abort a pending wake response ("never mind, Max").
   const pending = pendingWake.get(channel.id);
   const cancelWords = db.getSetting(guild.id, 'voice_cancel_words');
@@ -331,12 +404,16 @@ async function handleUtterance(guild, channel, userId, pcm) {
     return;
   }
 
+  // Either the wake word, or the conversation is already live and this is
+  // just the next thing someone said.
   const wakeWords = db.getSetting(guild.id, 'voice_wake_words');
-  if (matchesAny(text, wakeWords) && (!pending || pending.cancelled)) {
+  const woken = matchesAny(text, wakeWords);
+  const followUp = !woken && isFollowUpOpen(channel.id, now);
+  if ((woken || followUp) && (!pending || pending.cancelled)) {
     const state = { cancelled: false, controller: null, timer: null };
     state.timer = setTimeout(() => {
       if (state.cancelled) return;
-      respond(channel, name, userId, state)
+      respond(channel, name, userId, state, { followUp })
         .catch((err) => console.error('[voice] wake response failed:', err.message))
         .finally(() => { if (pendingWake.get(channel.id) === state) pendingWake.delete(channel.id); });
     }, WAKE_GRACE_MS);
@@ -344,16 +421,51 @@ async function handleUtterance(guild, channel, userId, pcm) {
   }
 }
 
-async function respond(channel, speakerName, speakerId, state) {
+/** Re-open the follow-up window once Max has actually finished speaking.
+ *
+ * Timed off the end of playback, not the end of generation: speakInVoice()
+ * returns the moment playback starts, so arming there would spend most of a
+ * 25-second window on a 20-second answer and leave five seconds to reply. */
+async function armFollowUp(channel, spoke, epoch) {
+  const guild = channel.guild;
+  if (!db.getSetting(guild.id, 'voice_followup_enabled')) return;
+  const seconds = Number(db.getSetting(guild.id, 'voice_followup_window_sec')) || 0;
+  if (seconds <= 0) return;
+
+  if (spoke) {
+    const player = players.get(guild.id);
+    if (player && player.state.status !== AudioPlayerStatus.Idle) {
+      try {
+        await entersState(player, AudioPlayerStatus.Idle, PLAYBACK_WAIT_MS);
+      } catch {
+        // Playback overran the ceiling or errored out. Arm anyway — the
+        // worse failure is Max going deaf after a glitched reply.
+      }
+    }
+  }
+  // Someone said "stop listening" while that was playing. Honour it.
+  if ((followUpEpoch.get(channel.id) || 0) !== epoch) return;
+
+  openFollowUp(channel.id, seconds);
+  console.log(`[voice] [#${channel.name}] listening for a follow-up for ${seconds}s`);
+}
+
+async function respond(channel, speakerName, speakerId, state, { followUp = false } = {}) {
   const now = Date.now();
-  if (now - (lastWake.get(channel.id) || 0) < WAKE_COOLDOWN_MS) return;
+  // The wake cooldown exists to stop wake-word spam, and inside a live
+  // conversation it would do the opposite of its job: eight seconds is the
+  // normal rhythm of back-and-forth, so it would swallow the follow-up that
+  // is the whole point — and swallow it silently.
+  if (!followUp && now - (lastWake.get(channel.id) || 0) < WAKE_COOLDOWN_MS) return;
   lastWake.set(channel.id, now);
+  const epoch = followUpEpoch.get(channel.id) || 0;
 
   const guild = channel.guild;
   const owner = isOwner(speakerId);
   const basePrompt = db.getSetting(guild.id, 'ai_system_prompt');
   const model = db.getSetting(guild.id, 'ai_model');
-  let systemPrompt = basePrompt + VOICE_PROMPT({ channel: channel.name, speaker: speakerName });
+  let systemPrompt = basePrompt
+    + VOICE_PROMPT({ channel: channel.name, speaker: speakerName, followUp });
   // Same memory block text chat gets — the speaker's profile card first,
   // then guild-wide durable/working memory.
   const memoryBlock = memory.getContext(guild.id, speakerId);
@@ -415,6 +527,16 @@ async function respond(channel, speakerName, speakerId, state) {
   }
   if (state.cancelled || !reply) return;
 
+  // Follow-up mode hands him every utterance in the channel, including two
+  // other people talking to each other. Declining is a valid outcome, and it
+  // deliberately does NOT re-arm the window: only a real answer extends the
+  // conversation, so idle chatter lets it lapse instead of holding it open
+  // (and billing for it) indefinitely.
+  if (followUp && isPass(reply)) {
+    console.log(`[voice] [#${channel.name}] not addressed to Max — passing`);
+    return;
+  }
+
   const display = tts.stripVoiceTags(reply) || reply;
   recordTurn(guild.id, { source: 'voice', channel: channel.name, speaker: 'Max', text: display });
   // userId null: Max doesn't get a profile card built about himself.
@@ -428,7 +550,15 @@ async function respond(channel, speakerName, speakerId, state) {
   } catch (err) {
     console.warn('[voice] posting reply failed:', err.message);
   }
-  await speakInVoice(guild, display);
+  const spoke = await speakInVoice(guild, display);
+  await armFollowUp(channel, spoke, epoch);
+}
+
+/** Did the model decline to answer? Tolerant of the trailing punctuation and
+ * stray formatting models add to a one-word reply, but still strict enough
+ * that a real sentence merely containing the word can't be swallowed. */
+export function isPass(reply) {
+  return new RegExp(`^[\\s"'*_.]*${VOICE_PASS}[\\s"'*_.!]*$`, 'i').test(reply);
 }
 
 // -- TTS playback -------------------------------------------------------------
@@ -462,4 +592,13 @@ export async function joinRequestedChannel(channel) {
 export function leaveRequestedGuild(guild) {
   manualHold.delete(guild.id);
   leaveGuild(guild);
+}
+
+/** Test seam: drop all in-process follow-up state. */
+export function _resetForTests() {
+  followUpUntil.clear();
+  followUpEpoch.clear();
+  lastWake.clear();
+  lastText.clear();
+  pendingWake.clear();
 }

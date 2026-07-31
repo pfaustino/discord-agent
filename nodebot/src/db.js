@@ -20,7 +20,10 @@
 // already hands them to callers as strings (interaction.guild.id, etc.).
 // Every function coerces with String(...) so callers can pass either.
 import { DatabaseSync } from 'node:sqlite';
-import { VOICE_WAKE_WORDS, VOICE_CANCEL_WORDS, OPENROUTER_MODEL } from './config.js';
+import {
+  VOICE_WAKE_WORDS, VOICE_CANCEL_WORDS, VOICE_STOP_SPEAKING_WORDS,
+  VOICE_STOP_LISTENING_WORDS, VOICE_FOLLOWUP_WINDOW_SEC, OPENROUTER_MODEL,
+} from './config.js';
 import { SYSTEM_PROMPT } from './persona.js';
 
 const SCHEMA = `
@@ -104,6 +107,13 @@ export const DEFAULTS = {
   ai_system_prompt: SYSTEM_PROMPT,
   voice_wake_words: VOICE_WAKE_WORDS,
   voice_cancel_words: VOICE_CANCEL_WORDS,
+  // Follow-up mode: for this many seconds after Max finishes speaking,
+  // anyone in the channel can carry the conversation on without saying the
+  // wake word again. Each real answer re-arms it. 0 disables it.
+  voice_followup_enabled: true,
+  voice_followup_window_sec: VOICE_FOLLOWUP_WINDOW_SEC,
+  voice_stop_speaking_words: VOICE_STOP_SPEAKING_WORDS,
+  voice_stop_listening_words: VOICE_STOP_LISTENING_WORDS,
   quiet_mode: false,
   log_channel: null,
   // welcome / goodbye / autorole
