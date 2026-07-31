@@ -175,6 +175,15 @@ node nodebot/src/migrate-settings.js --from /data/bot.db --to /data/nodebot.db
 
 Add `--dry-run` to see what would move without writing anything.
 
+**Point `DATABASE_PATH` at a new file — not the Python bot's `bot.db`.** Both
+schemas use the same table names, so `CREATE TABLE IF NOT EXISTS` is a no-op
+against the old database and the bot would come up looking healthy while
+mangling every Discord id: Python stores snowflakes as `INTEGER`, and anything
+past 2^53 comes back to JS as a rounded float (`1234567890123456789` →
+`...800`), so warnings, mod logs and per-member memory would key to the wrong
+user. The bot detects this at startup and refuses to start rather than corrupt
+data, printing the migration command above.
+
 > Note: locally the session cookie is marked `secure`, which most browsers still accept
 > on `localhost`. Slash commands are synced per-guild on startup, so they appear
 > immediately in servers the bot is already in.

@@ -20,7 +20,15 @@ if (!DISCORD_TOKEN) {
 // before anything else logs so startup lines are captured too.
 logbuffer.install();
 
-db.initDb(DATABASE_PATH);
+try {
+  db.initDb(DATABASE_PATH);
+} catch (err) {
+  // Refusing to start is deliberate. The alternative — coming up against the
+  // wrong database and mangling ids as it goes — is far harder to notice and
+  // far harder to undo than a crash with instructions in it.
+  console.error(err.message);
+  process.exit(1);
+}
 process.on('exit', () => db.closeDb());
 
 // Replay anything said but never folded into memory before the last

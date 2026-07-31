@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import * as db from '../src/db.js';
 
 function withDb(fn) {
@@ -137,3 +138,65 @@ test('mod logs: add and list newest first', withDb(() => {
   assert.equal(logs.length, 2);
   assert.equal(logs[0].action, 'ban'); // most recent first
 }));
+
+// -- guarding against the Python bot's database ------------------------------
+
+/** Build a database with the Python bot's shape: same table name, snowflake
+ * columns as INTEGER rather than TEXT. */
+function pythonShapedDb(file) {
+  const handle = new DatabaseSync(file);
+  handle.exec(`CREATE TABLE IF NOT EXISTS guild_settings (
+      guild_id INTEGER NOT NULL,
+      key      TEXT NOT NULL,
+      value    TEXT NOT NULL,
+      PRIMARY KEY (guild_id, key)
+  );`);
+  handle.close();
+}
+
+test("opening the Python bot's database is refused, not silently accepted", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'nodebot-pydb-'));
+  const file = path.join(dir, 'bot.db');
+  try {
+    pythonShapedDb(file);
+    assert.throws(() => db.initDb(file), /Python bot's database/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('the refusal says how to fix it', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'nodebot-pydb-'));
+  const file = path.join(dir, 'bot.db');
+  try {
+    pythonShapedDb(file);
+    assert.throws(() => db.initDb(file), /migrate-settings\.js --from/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a brand new database file is accepted', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'nodebot-newdb-'));
+  try {
+    assert.doesNotThrow(() => db.initDb(path.join(dir, 'fresh.db')));
+    db.closeDb();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("reopening this bot's own database is accepted", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'nodebot-reopen-'));
+  const file = path.join(dir, 'nodebot.db');
+  try {
+    db.initDb(file);
+    db.setSetting('111', 'ai_model', 'x');
+    db.closeDb();
+    assert.doesNotThrow(() => db.initDb(file));
+    assert.equal(db.getSetting('111', 'ai_model'), 'x');
+    db.closeDb();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
