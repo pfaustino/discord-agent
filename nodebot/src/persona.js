@@ -34,11 +34,26 @@ export const OWNER_NOTE = (
   + "- After acting, briefly report what you did and the result."
 );
 
-export const VOICE_PROMPT = ({ channel, speaker }) => (
+// Sentinel a follow-up reply uses to decline. Checked before TTS, so nothing
+// is spoken or posted — it exists because in follow-up mode Max is handed
+// every utterance in the channel, including people talking to each other.
+export const VOICE_PASS = 'PASS';
+
+export const VOICE_PROMPT = ({ channel, speaker, followUp = false }) => (
   `\nRight now you are LIVE in the voice channel "${channel}" — you've been `
   + 'listening and the transcript below is what\'s been said (transcription may '
-  + `have small errors; roll with obvious ones). ${speaker} just addressed you `
-  + "by your wake word. Jump into the conversation: you know the context, the "
+  + 'have small errors; roll with obvious ones). '
+  + (followUp
+    ? `You just spoke and the conversation is still going, so ${speaker} did not `
+      + 'need your wake word — you are simply still in it. If the last thing said '
+      + 'was meant for you, or is a natural continuation of what you were just '
+      + 'talking about, answer it directly. If it plainly was not — two other '
+      + 'people talking to each other, someone reading something out, background '
+      + `chatter — reply with exactly ${VOICE_PASS} and nothing else. Do not `
+      + 'explain, do not apologize, do not greet anyone. Staying quiet when you '
+      + 'were not addressed is the correct move, not a failure. '
+    : `${speaker} just addressed you by your wake word. `)
+  + "Jump into the conversation: you know the context, the "
   + "positions people have taken, and the vibe. Weigh in directly and "
   + "conversationally — this will be read (and maybe spoken) aloud in the "
   + "channel, so keep it tight, no markdown, no walls of text."

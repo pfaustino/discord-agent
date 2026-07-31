@@ -52,6 +52,32 @@ export const VOICE_CANCEL_WORDS = (process.env.VOICE_CANCEL_WORDS
   || 'never mind,nevermind,forget it,forget about it,cancel that,scratch that')
   .split(',').map((w) => w.trim().toLowerCase()).filter(Boolean);
 
+// Follow-up mode end phrases. Two different things, deliberately:
+// "stop speaking" is barge-in (shut up now, but stay in the conversation);
+// "stop listening" ends the conversation (finish the sentence, then go back
+// to needing the wake word).
+//
+// No apostrophes or punctuation in these defaults: voice.js's matchesAny()
+// strips non-alphanumerics from the transcript before comparing, but NOT
+// from the phrase list, so "that's all max" could never match anything.
+// They are also all multi-word — matching is substring-based, so a bare
+// "stop" would fire inside "stopping".
+export const VOICE_STOP_SPEAKING_WORDS = (process.env.VOICE_STOP_SPEAKING_WORDS
+  || 'max stop speaking,max stop talking,stop speaking max,stop talking max,'
+  + 'max be quiet,max shut up,max quiet down')
+  .split(',').map((w) => w.trim().toLowerCase()).filter(Boolean);
+export const VOICE_STOP_LISTENING_WORDS = (process.env.VOICE_STOP_LISTENING_WORDS
+  || 'max stop listening,stop listening max,max go to sleep,max we are done,'
+  + 'max that is all,thanks max that is all')
+  .split(',').map((w) => w.trim().toLowerCase()).filter(Boolean);
+
+// How long after Max finishes speaking he keeps answering without the wake
+// word. 0 disables follow-up mode outright. Per-guild override lives in
+// db.js DEFAULTS as voice_followup_window_sec.
+export const VOICE_FOLLOWUP_WINDOW_SEC = parseInt(
+  process.env.VOICE_FOLLOWUP_WINDOW_SEC || '25', 10,
+);
+
 // Voice noise gate — utterances shorter than MIN_UTTERANCE_SEC seconds, or
 // quieter than MIN_UTTERANCE_RMS (0-32768), are dropped as background-noise
 // blips. Same env var names (and same defaults) the listener sidecar used,

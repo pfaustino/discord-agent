@@ -20,7 +20,10 @@
 // already hands them to callers as strings (interaction.guild.id, etc.).
 // Every function coerces with String(...) so callers can pass either.
 import { DatabaseSync } from 'node:sqlite';
-import { VOICE_WAKE_WORDS, VOICE_CANCEL_WORDS, OPENROUTER_MODEL } from './config.js';
+import {
+  VOICE_WAKE_WORDS, VOICE_CANCEL_WORDS, VOICE_STOP_SPEAKING_WORDS,
+  VOICE_STOP_LISTENING_WORDS, VOICE_FOLLOWUP_WINDOW_SEC, OPENROUTER_MODEL,
+} from './config.js';
 import { SYSTEM_PROMPT } from './persona.js';
 
 const SCHEMA = `
@@ -104,6 +107,13 @@ export const DEFAULTS = {
   ai_system_prompt: SYSTEM_PROMPT,
   voice_wake_words: VOICE_WAKE_WORDS,
   voice_cancel_words: VOICE_CANCEL_WORDS,
+  // Follow-up mode: for this many seconds after Max finishes speaking,
+  // anyone in the channel can carry the conversation on without saying the
+  // wake word again. Each real answer re-arms it. 0 disables it.
+  voice_followup_enabled: true,
+  voice_followup_window_sec: VOICE_FOLLOWUP_WINDOW_SEC,
+  voice_stop_speaking_words: VOICE_STOP_SPEAKING_WORDS,
+  voice_stop_listening_words: VOICE_STOP_LISTENING_WORDS,
   quiet_mode: false,
   log_channel: null,
   // welcome / goodbye / autorole
@@ -135,8 +145,43 @@ export const DEFAULTS = {
 
 let db = null;
 
+/** Is this the Python bot's database rather than this one's?
+ *
+ * Every table name is identical between the two schemas, so CREATE TABLE IF
+ * NOT EXISTS is a silent no-op against it and the bot would come up looking
+ * perfectly healthy. It would not be: the Python side stores Discord
+ * snowflakes as INTEGER, and any id past 2^53 is already a rounded float by
+ * the time SQLite hands it back to JS (1234567890123456789 comes back as
+ * ...800), so warnings, mod logs and per-member memory would all silently
+ * key to the wrong user. guild_settings.guild_id is INTEGER there and TEXT
+ * here, which tells the two apart with no ambiguity. */
+function looksLikePythonDb(handle) {
+  let columns;
+  try {
+    columns = handle.prepare("SELECT name, type FROM pragma_table_info('guild_settings')").all();
+  } catch {
+    return false; // no such table — a fresh database, which is fine
+  }
+  const guildId = columns.find((c) => c.name === 'guild_id');
+  return Boolean(guildId) && String(guildId.type).toUpperCase() === 'INTEGER';
+}
+
 export function initDb(path = 'nodebot.db') {
-  db = new DatabaseSync(path);
+  const handle = new DatabaseSync(path);
+  if (looksLikePythonDb(handle)) {
+    handle.close();
+    throw new Error(
+      `DATABASE_PATH points at the Python bot's database (${path}).\n\n`
+      + 'Both schemas use the same table names, so this would look like it '
+      + 'worked while silently corrupting every Discord id: the Python side '
+      + 'stores snowflakes as INTEGER, and ids past 2^53 come back to JS as '
+      + 'rounded floats. Warnings, mod logs and per-member memory would all '
+      + 'key to the wrong user.\n\n'
+      + 'Point DATABASE_PATH at a new file, then carry the settings across:\n'
+      + `  node nodebot/src/migrate-settings.js --from ${path} --to /data/nodebot.db`,
+    );
+  }
+  db = handle;
   db.exec(SCHEMA);
   return db;
 }

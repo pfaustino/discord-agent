@@ -2,16 +2,41 @@
 # via @snazzah/davey), moderation, automod, welcome, and the AI tool loop.
 # The Python tree is dormant: still in the repo, never installed or started.
 #
-# nodejs_22 — required by nodebot (node:sqlite, used by src/db.js, is built
-#             into Node 22, so there is no native sqlite to compile)
-# ffmpeg    — TTS playback via prism-media
+# nodejs_22       — required by nodebot (node:sqlite, used by src/db.js, is
+#                   built into Node 22, so there is no native sqlite to
+#                   compile)
+# ffmpeg          — TTS playback via prism-media
+# build-essential — gcc/g++/make/libc6-dev, and
+# python3           python3 for node-gyp's configure step. BUILD-only: nothing
+#                   Python runs at runtime, the dormant Python tree stays
+#                   uninstalled.
+#
+# The toolchain is not optional. @discordjs/opus installs via
+# `node-pre-gyp install --fallback-to-build`, and it publishes no prebuild
+# for this target at all — node-pre-gyp 404s on
+#   .../opus-v0.10.0-node-v127-napi-v3-linux-x64-glibc-2.39.tar.gz
+# (its prebuilds are keyed by libc version, and glibc 2.39 isn't among them),
+# so it compiles from source on every build. It vendors opus in deps/ and
+# links it statically, so a compiler is all it needs — no system libopus.
+#
+# It used to get that toolchain by accident: nixPkgs was ["...", "nodejs_22"],
+# and the "..." pulled in Nixpacks' auto-detected Python provider, which
+# happens to carry a C toolchain. The cutover to Node dropped the "...", the
+# toolchain went with it, and `npm ci` died with "Could not find any Python
+# installation to use". The build never produced an image, so Railway kept
+# serving the previous (Python) deploy and the bot appeared to keep running.
+#
+# These go in aptPkgs, not nixPkgs, deliberately: the Nixpacks base image is
+# Debian, so Debian's own gcc/glibc headers are self-consistent, where a Nix
+# gcc resolving against a Debian base is a known source of build breakage.
+# Listing them explicitly also means they survive deleting the Python tree.
 #
 # Overriding [phases.install] replaces Nixpacks' auto-detected pip install
 # (root requirements.txt still makes it detect a Python app), so no Python
 # dependencies are installed.
 [phases.setup]
 nixPkgs = ["nodejs_22"]
-aptPkgs = ["ffmpeg"]
+aptPkgs = ["ffmpeg", "build-essential", "python3"]
 
 [phases.install]
 cmds = ["cd nodebot && npm ci --omit=dev"]
