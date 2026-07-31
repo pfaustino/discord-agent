@@ -4,13 +4,20 @@ A marketing site for Max — the landing page, the subscription catalog, and a
 bot-builder flow that ends in an invite link. It is a **design showcase**: no
 backend, no checkout, no Discord application is really registered.
 
-Nothing here touches the bot. `site/` is static and is not built, imported or
-served by `nodebot/`.
+The bot serves it. `nodebot/src/web/server.js` mounts this folder read-only at
+`/site/`, alongside the dashboard on the same port — so wherever the dashboard
+lives, the site is at `<dashboard>/site/`. It is public (no login) and served
+`no-cache` while it is an MVP, so a redeploy shows changes immediately. No bot
+logic imports anything from here.
 
 ## Run it
 
-No build step and no dependencies. Open `index.html` directly, or serve the
-folder:
+Start the bot and open `/site/`. There are links both ways — the dashboard's
+login card and Overview tab point at the site, and the site's footer points
+back at the dashboard.
+
+To work on it alone, there is no build step and no dependencies. Open
+`index.html` directly, or serve the folder:
 
 ```bash
 cd site && python3 -m http.server 8000

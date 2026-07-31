@@ -35,6 +35,10 @@ import * as voice from '../voice.js';
 import * as db from '../db.js';
 
 const STATIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'static');
+// The showcase site at the repo root, served read-only under /site. It is a
+// marketing page with no backend — resolved relative to this file rather than
+// cwd, so it works whether the process is started from the repo root or here.
+const SITE_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '../../../site');
 const DASHBOARD_ACTOR = 'Dashboard';
 
 const CONTENT_TYPES = {
@@ -44,6 +48,7 @@ const CONTENT_TYPES = {
   '.svg': 'image/svg+xml',
   '.png': 'image/png',
   '.ico': 'image/x-icon',
+  '.md': 'text/markdown; charset=utf-8',
 };
 
 class HttpError extends Error {
@@ -686,10 +691,13 @@ function matchRoute(pattern, pathname) {
   return params;
 }
 
-async function serveStatic(res, name) {
-  const resolved = path.join(STATIC_DIR, name);
-  // Never let a crafted path walk out of the static directory.
-  if (!resolved.startsWith(STATIC_DIR)) {
+async function serveStatic(res, name, opts = {}) {
+  const dir = opts.dir || STATIC_DIR;
+  const resolved = path.resolve(dir, name);
+  // Never let a crafted path walk out of the directory being served. The
+  // separator matters: a bare startsWith would also accept a sibling
+  // directory whose name merely begins with this one's.
+  if (resolved !== dir && !resolved.startsWith(dir + path.sep)) {
     sendJson(res, 403, { detail: 'Forbidden' });
     return;
   }
@@ -697,7 +705,7 @@ async function serveStatic(res, name) {
     const data = await readFile(resolved);
     res.writeHead(200, {
       'Content-Type': CONTENT_TYPES[path.extname(resolved)] || 'application/octet-stream',
-      'Cache-Control': 'public, max-age=31536000',
+      'Cache-Control': opts.cacheControl || 'public, max-age=31536000',
     });
     res.end(data);
   } catch {
@@ -732,6 +740,22 @@ export function createDashboard(client) {
       }
       if (req.method === 'GET' && pathname.startsWith('/static/')) {
         await serveStatic(res, pathname.slice('/static/'.length));
+        return;
+      }
+
+      // Showcase site. Public and read-only — it is a marketing page, so it
+      // sits in front of the auth check the same way the dashboard's own
+      // assets do. No-cache while it is still an MVP being iterated on.
+      if (req.method === 'GET' && pathname === '/site') {
+        // Redirect rather than serve: without the trailing slash every
+        // relative link in the page would resolve against the site root.
+        res.writeHead(302, { Location: '/site/' });
+        res.end();
+        return;
+      }
+      if (req.method === 'GET' && pathname.startsWith('/site/')) {
+        const rest = pathname.slice('/site/'.length) || 'index.html';
+        await serveStatic(res, rest, { dir: SITE_DIR, cacheControl: 'no-cache' });
         return;
       }
 
