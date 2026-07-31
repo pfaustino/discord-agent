@@ -5,12 +5,12 @@
   "description": "Brand-new Discord bot, built fresh in Node.js — layer by layer.",
   "main": "src/index.js",
   "engines": {
-    "node": ">=22"
+    "node": ">=22.5"
   },
   "scripts": {
-    "start": "node src/index.js",
-    "deploy-commands": "node src/deploy-commands.js",
-    "test": "OPENROUTER_API_KEY=test-key node --test"
+    "start": "node --experimental-sqlite src/index.js",
+    "deploy-commands": "node --experimental-sqlite src/deploy-commands.js",
+    "test": "OPENROUTER_API_KEY=test-key node --experimental-sqlite --test"
   },
   "dependencies": {
     "@discordjs/opus": "^0.10.0",
