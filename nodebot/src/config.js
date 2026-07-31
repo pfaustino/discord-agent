@@ -15,6 +15,12 @@ export const OPENROUTER_UTILITY_MODEL = process.env.OPENROUTER_UTILITY_MODEL || 
 // Spend breaker: hard cap on background model calls per hour (0 = uncapped).
 export const OPENROUTER_BG_HOURLY_CAP = parseInt(process.env.OPENROUTER_BG_HOURLY_CAP || '240', 10);
 
+// GitHub read access. The token is optional — without it the API still
+// works anonymously at 60 requests/hour instead of 5000. GITHUB_REPO is the
+// repo Max lives in, which is what the branch/PR/diff tools read.
+export const GITHUB_TOKEN = process.env.GITHUB_TOKEN || '';
+export const GITHUB_REPO = process.env.GITHUB_REPO || 'seed0001/discord-agent';
+
 // Speech-to-text: any OpenAI-compatible /audio/transcriptions endpoint
 // (OpenAI Whisper, Groq, ...) — same env vars as the Python bot.
 export const TRANSCRIPTION_API_KEY = process.env.TRANSCRIPTION_API_KEY || '';

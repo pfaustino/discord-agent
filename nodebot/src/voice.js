@@ -24,7 +24,9 @@ import * as tts from './tts.js';
 import { TOOL_SCHEMAS, runTool } from './tools.js';
 import { KB_TOOL_SCHEMAS, runTool as runKbTool } from './knowledge.js';
 import * as agentTools from './agentTools.js';
+import * as github from './github.js';
 import * as memory from './memory.js';
+import { REPO_TOOL_SCHEMAS, runRepoTool } from './textChat.js';
 import { isOwner } from './utils.js';
 import * as db from './db.js';
 
@@ -362,11 +364,15 @@ async function respond(channel, speakerName, speakerId, state) {
     author: guild.members.cache.get(speakerId)?.user
       || { id: speakerId, tag: speakerName, username: speakerName },
   };
-  const tools = owner
-    ? [...TOOL_SCHEMAS, ...KB_TOOL_SCHEMAS, memory.RECALL_TOOL_SCHEMA, ...agentTools.TOOL_SCHEMAS]
-    : [...TOOL_SCHEMAS, ...KB_TOOL_SCHEMAS, memory.RECALL_TOOL_SCHEMA];
+  const baseTools = [
+    ...TOOL_SCHEMAS, ...KB_TOOL_SCHEMAS, memory.RECALL_TOOL_SCHEMA,
+    ...github.GITHUB_TOOL_SCHEMAS, ...REPO_TOOL_SCHEMAS,
+  ];
+  const tools = owner ? [...baseTools, ...agentTools.TOOL_SCHEMAS] : baseTools;
   const toolHandler = async (name, args) => {
     if (name === 'recall_chat_log') return memory.recall(guild.id, args);
+    if (name.startsWith('github_')) return github.runGithubTool(name, args);
+    if (name.startsWith('repo_')) return runRepoTool(name, args);
     if (name.startsWith('kb_')) return runKbTool(guild.id, name, args);
     if (owner && name in agentTools.TOOLS) return agentTools.execute(null, fakeMessage, name, args);
     return runTool(name, args);
