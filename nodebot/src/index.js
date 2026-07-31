@@ -8,6 +8,7 @@ import * as welcome from './welcome.js';
 import * as memory from './memory.js';
 import * as proactive from './proactive.js';
 import * as logbuffer from './logbuffer.js';
+import { startDashboard, applyPresence } from './web/server.js';
 import * as db from './db.js';
 
 if (!DISCORD_TOKEN) {
@@ -46,6 +47,8 @@ client.once(Events.ClientReady, (c) => {
   voice.init(c);
   // Pressure decay/flow runs on its own clock, independent of message traffic.
   proactive.startTicker(c);
+  applyPresence(c);
+  startDashboard(c);
 });
 
 client.on(Events.InteractionCreate, async (interaction) => {

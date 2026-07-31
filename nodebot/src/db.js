@@ -125,6 +125,12 @@ export const DEFAULTS = {
   deesc_harsh_language: false,
   // background/utility model override; null falls back to the env default
   ai_utility_model: null,
+  // voice monitoring master switch (dashboard start/stop)
+  voice_enabled: false,
+  // bot-wide presence, stored under guild id 0 by the dashboard
+  presence_status: 'online',
+  presence_activity_type: 'playing',
+  presence_text: '',
 };
 
 let db = null;

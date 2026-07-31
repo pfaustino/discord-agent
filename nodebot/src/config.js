@@ -1,5 +1,15 @@
 import 'dotenv/config';
 
+// Process start stamp — stamped into dashboard asset URLs to defeat browser
+// caching, and shown as the dashboard build id.
+export const BUILD_ID = String(Math.floor(Date.now() / 1000));
+
+// Dashboard: password login and the key that signs session cookies. Same
+// env var names as the Python bot.
+export const DASHBOARD_PASSWORD = process.env.DASHBOARD_PASSWORD || '';
+export const SECRET_KEY = process.env.SECRET_KEY || '';
+export const PORT = parseInt(process.env.PORT || '8000', 10);
+
 export const DISCORD_TOKEN = process.env.DISCORD_TOKEN || '';
 export const CLIENT_ID = process.env.CLIENT_ID || '';
 export const OWNER_ID = process.env.OWNER_ID || '';
