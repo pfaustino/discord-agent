@@ -4,7 +4,8 @@
 #
 # nodejs_22       — required by nodebot (node:sqlite, used by src/db.js, is
 #                   built into Node 22, so there is no native sqlite to
-#                   compile)
+#                   compile). See NODE_OPTIONS below: "built in" does not mean
+#                   "switched on" at the version this resolves to.
 # ffmpeg          — TTS playback via prism-media
 # build-essential — gcc/g++/make/libc6-dev, and
 # python3           python3 for node-gyp's configure step. BUILD-only: nothing
@@ -41,9 +42,29 @@ aptPkgs = ["ffmpeg", "build-essential", "python3"]
 [phases.install]
 cmds = ["cd nodebot && npm ci --omit=dev"]
 
+# node:sqlite is "built into Node 22" but not switched on across all of it:
+# it landed in 22.5.0 behind --experimental-sqlite and was only unflagged in
+# 22.13.0. nixPkgs' nodejs_22 resolves to 22.10.0 here, which is inside that
+# gap, so src/db.js's `import { DatabaseSync } from 'node:sqlite'` died at
+# module load with:
+#
+#   Error [ERR_UNKNOWN_BUILTIN_MODULE]: No such built-in module: node:sqlite
+#   Node.js v22.10.0
+#
+# — crash-looping the container after a perfectly good build. The flag is
+# required at/below 22.12 and accepted as a harmless no-op above it, so
+# passing it unconditionally is safe on any Node 22+.
+#
+# Set here as well as in the start command so one-off runs get it too —
+# notably `node nodebot/src/migrate-settings.js`, which opens SQLite the same
+# way and would otherwise fail the same way. Node tolerates the flag arriving
+# from both NODE_OPTIONS and the command line at once.
+[variables]
+NODE_OPTIONS = "--experimental-sqlite"
+
 # Register slash commands, then hand the process over to the bot. The `||`
 # keeps registration non-fatal: a Discord API hiccup or a missing CLIENT_ID
 # must not stop Max from coming up. `exec` replaces the shell so the bot is
 # PID 1 and receives Railway's shutdown signals directly.
 [start]
-cmd = "node nodebot/src/deploy-commands.js || echo 'slash-command registration skipped — bot still starting'; exec node nodebot/src/index.js"
+cmd = "node --experimental-sqlite nodebot/src/deploy-commands.js || echo 'slash-command registration skipped — bot still starting'; exec node --experimental-sqlite nodebot/src/index.js"

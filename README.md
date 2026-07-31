@@ -149,8 +149,15 @@ from there.
 
 ### Run locally
 
-Needs Node 22+ (the bot uses `node:sqlite`, which is built in) and `ffmpeg` on
-PATH for TTS playback.
+Needs Node 22.5+ and `ffmpeg` on PATH for TTS playback.
+
+The bot stores everything in `node:sqlite`, which is built into Node but not
+switched on across all of Node 22: it landed in 22.5.0 behind
+`--experimental-sqlite` and was only unflagged in 22.13.0. The npm scripts and
+the deploy start command pass that flag unconditionally — it is required at or
+below 22.12 and a harmless no-op above it. If you run a script directly rather
+than through `npm`, pass it yourself or you'll get
+`ERR_UNKNOWN_BUILTIN_MODULE: No such built-in module: node:sqlite`.
 
 ```bash
 cd nodebot
@@ -170,7 +177,7 @@ Settings (persona, welcome messages, banned words, log channel, autorole,
 model override, wake words) carry across; chat history and memories do not:
 
 ```bash
-node nodebot/src/migrate-settings.js --from /data/bot.db --to /data/nodebot.db
+node --experimental-sqlite nodebot/src/migrate-settings.js --from /data/bot.db --to /data/nodebot.db
 ```
 
 Add `--dry-run` to see what would move without writing anything.
