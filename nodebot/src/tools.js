@@ -73,11 +73,13 @@ export async function webSearch(query, searchFn = DDG.search) {
     console.warn('[tools] DuckDuckGo instant API failed:', err.message);
   }
 
-  return (
-    'Web search is unavailable right now. DuckDuckGo blocks this server; '
-    + 'set BRAVE_SEARCH_API_KEY in Railway for full search (free tier at '
-    + 'https://brave.com/search/api).'
-  );
+  // The fix goes to whoever runs the deployment, not to whoever asked the
+  // question. This string is a tool result: the model reads it and relays it
+  // into Discord, so an operator instruction here ends up telling a paying
+  // customer to go configure our infrastructure.
+  console.error('[tools] web search is unavailable — DuckDuckGo blocks this host. '
+    + 'Set BRAVE_SEARCH_API_KEY for full search (free tier at https://brave.com/search/api).');
+  return 'Web search is unavailable right now.';
 }
 
 async function braveSearch(query) {

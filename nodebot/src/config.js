@@ -58,7 +58,12 @@ export const FISH_VOICE_ID = process.env.FISH_VOICE_ID || '';
 // Microsoft Edge neural voice when Fish Audio is not configured — any
 // name from https://speech.microsoft.com/portal/voicegallery (e.g.
 // en-US-JennyNeural, en-US-GuyNeural).
-export const EDGE_TTS_VOICE = process.env.EDGE_TTS_VOICE || 'en-US-JennyNeural';
+//
+// The default is the voice this shipped with, so adding the knob doesn't
+// silently change how every existing deployment sounds on the next deploy —
+// that is a product decision, and it belongs in someone's environment rather
+// than in a default. Set EDGE_TTS_VOICE to pick a different one.
+export const EDGE_TTS_VOICE = process.env.EDGE_TTS_VOICE || 'en-US-GuyNeural';
 
 // Env-configured fallback defaults (used to seed db.js's DEFAULTS) — the
 // live, per-guild values come from db.getSetting(guildId, 'voice_wake_words'

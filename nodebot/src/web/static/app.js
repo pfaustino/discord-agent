@@ -782,9 +782,6 @@ async function renderSettings() {
     // permission to read it, still gets a working settings page.
     api(`/guilds/${state.guildId}/soundboard`).catch(() => []),
   ]);
-  // Lowercased bot name for the example phrases below — the matcher lowercases
-  // everything anyway, so the examples should look the way a saved phrase does.
-  const lower = botLabel(settings).toLowerCase();
   const textChannels = channels.filter((c) => c.type === "text");
   // Bot/integration-managed roles can't be handed out to people, so they're
   // no use as a dashboard-access group.
