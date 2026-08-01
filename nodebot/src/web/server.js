@@ -24,6 +24,8 @@ import {
   createState, verifyState, TOKEN_TTL,
 } from './auth.js';
 import { LEVELS, levelAtLeast, resolveLevel, memberFacts } from './roles.js';
+import { HttpError } from './httpError.js';
+import { platformRoutes, resolvePlatformSession } from '../platform/routes.js';
 import {
   oauthConfigured, authorizeUrl, exchangeCode, fetchDiscordUser,
 } from './oauth.js';
@@ -52,14 +54,6 @@ const CONTENT_TYPES = {
   '.ico': 'image/x-icon',
   '.md': 'text/markdown; charset=utf-8',
 };
-
-class HttpError extends Error {
-  constructor(status, detail) {
-    super(detail);
-    this.status = status;
-    this.detail = detail;
-  }
-}
 
 // -- serialization -----------------------------------------------------------
 
@@ -203,6 +197,11 @@ async function levelForUser(client, userId) {
 // cannot accidentally be added unauthenticated.
 function buildRoutes(client) {
   return [
+    // The customer-facing platform — accounts, orders, credits. Declares its
+    // own auth (`account: 'any' | 'staff'`), which the dispatcher below
+    // enforces separately from the Discord dashboard's access levels.
+    ...platformRoutes(),
+
     // The password is the instance owner's way in, and stays creator-level.
     // It is also the break-glass path: if Discord OAuth is misconfigured, or
     // the role mapping locks everyone out, this still works.
@@ -818,7 +817,23 @@ export function createDashboard(client) {
         const params = matchRoute(pattern, pathname);
         if (!params) continue;
         let session = null;
-        if (!options?.open) {
+        let platform = null;
+        if (options?.account) {
+          // Platform routes authenticate as a CUSTOMER, not against this
+          // Discord server's roles. A creator-level dashboard cookie is not
+          // a platform session and deliberately does not stand in for one:
+          // the person running a server and the person who owns the account
+          // paying for it are frequently not the same human.
+          platform = resolvePlatformSession(req);
+          if (!platform) {
+            sendJson(res, 401, { detail: 'Not signed in' });
+            return;
+          }
+          if (options.account === 'staff' && !platform.isStaff) {
+            sendJson(res, 403, { detail: 'That is staff-only.' });
+            return;
+          }
+        } else if (!options?.open) {
           session = sessionOf(req);
           if (!session) {
             sendJson(res, 401, { detail: 'Not authenticated' });
@@ -838,7 +853,7 @@ export function createDashboard(client) {
         const body = ['POST', 'PUT', 'PATCH'].includes(method) ? await readBody(req) : {};
         const query = Object.fromEntries(url.searchParams);
         const result = await handler({
-          params, body, query, req, res, session,
+          params, body, query, req, res, session, platform, sendJson,
         });
         if (result !== undefined && !res.writableEnded) sendJson(res, 200, result);
         return;

@@ -94,6 +94,11 @@ CREATE TABLE IF NOT EXISTS credit_grants (
     created_at    INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_servers_account ON platform_servers (account_id);
+-- Approving from the staff queue must be idempotent: a double-click cannot
+-- end up provisioning the same order twice. Partial, because a server added
+-- by hand has no order behind it and several of those may coexist.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_servers_request
+    ON platform_servers (request_id) WHERE request_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_requests_stage ON platform_requests (stage, submitted_at);
 CREATE INDEX IF NOT EXISTS idx_usage_account_at ON usage_events (account_id, at);
 CREATE INDEX IF NOT EXISTS idx_usage_server_at ON usage_events (server_id, at);

@@ -116,3 +116,13 @@ export const MIN_UTTERANCE_RMS = parseInt(process.env.MIN_UTTERANCE_RMS || '300'
 
 // SQLite file path for the persistence layer (db.js).
 export const DATABASE_PATH = process.env.DATABASE_PATH || 'nodebot.db';
+
+// Platform staff: the people who can see the order queue and issue credits.
+//
+// This exists to solve the bootstrap — the first staff account cannot be
+// promoted by an existing staff account, because there isn't one. Any account
+// whose email is listed here is staff regardless of its stored flag, so
+// access can also be taken back by editing the environment when the database
+// is the thing you cannot reach.
+export const PLATFORM_STAFF_EMAILS = (process.env.PLATFORM_STAFF_EMAILS || '')
+  .split(',').map((e) => e.trim().toLowerCase()).filter(Boolean);
