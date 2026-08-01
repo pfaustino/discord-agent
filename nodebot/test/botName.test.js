@@ -111,3 +111,10 @@ test('the derived name is the override when one is set', withDb(() => {
   db.setSetting('1', 'bot_name', 'Pixel');
   assert.ok(voicePhrases(clientNamed('Amy'), '1', 'voice_wake_words').includes('hey pixel'));
 }));
+
+test('{ai} in saved wake words expands to the effective bot name', withDb(() => {
+  db.setSetting('1', 'voice_wake_words', ['hey {ai}', '{ai} you around']);
+  const list = voicePhrases(clientNamed('Helena'), '1', 'voice_wake_words');
+  assert.ok(list.includes('hey helena'));
+  assert.ok(list.includes('helena you around'));
+}));
