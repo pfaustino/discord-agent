@@ -19,6 +19,7 @@
       <a href="index.html#memory">Memory</a>
       <a href="index.html#voice">Voice</a>
       <a href="pricing.html">Pricing</a>
+      <a href="app.html">Dashboard</a>
     </nav>
     <div class="nav__cta">
       <a href="index.html" class="btn btn--ghost btn--sm">Overview</a>
@@ -36,8 +37,41 @@
   <main>
     <div class="progress" data-progress></div>
 
-    <!-- 1 · Identity -->
+    <!-- 1 · Venue & account -->
     <section class="pane is-on" data-pane="0">
+      <div class="pane__head">
+        <h2>How do you want to run it?</h2>
+        <p>This decides who holds the provider accounts and how usage gets paid for. Everything after this step is the same either way.</p>
+      </div>
+
+      <div class="venues" data-venues></div>
+
+      <div data-venue-note></div>
+
+      <div class="field" style="margin-top:26px">
+        <label for="acct">Organisation or community</label>
+        <input class="input" id="acct" maxlength="60" placeholder="Northwind Collective" data-bind="accountName">
+      </div>
+
+      <div class="field">
+        <label for="email">Contact email</label>
+        <input class="input" id="email" type="email" maxlength="120" placeholder="ops@example.com" data-bind="email">
+        <div class="hint">Where the invite link, receipts and low-balance warnings go.</div>
+      </div>
+
+      <div class="field">
+        <label for="servername">Discord server name</label>
+        <input class="input" id="servername" maxlength="60" placeholder="Northwind HQ" data-bind="serverName">
+        <div class="hint">The server this bot will join. You can add more later from the dashboard.</div>
+      </div>
+
+      <div class="pane__nav">
+        <button class="btn btn--primary" data-next>Continue</button>
+      </div>
+    </section>
+
+    <!-- 2 · Identity -->
+    <section class="pane" data-pane="1">
       <div class="pane__head">
         <h2>Who is he?</h2>
         <p>This is the name and face your server sees. Both are changeable later from the dashboard — nothing here is permanent.</p>
@@ -67,7 +101,7 @@
     </section>
 
     <!-- 2 · Personality -->
-    <section class="pane" data-pane="1">
+    <section class="pane" data-pane="2">
       <div class="pane__head">
         <h2>How does he talk?</h2>
         <p>This is the <b>character</b> half of the prompt — who he is and how he sounds. The <b>capability</b> half, which describes what he can actually do, is generated from the modules you switch on next, so he can never claim a tool he does not have.</p>
@@ -91,7 +125,7 @@
     </section>
 
     <!-- 3 · Capabilities -->
-    <section class="pane" data-pane="2">
+    <section class="pane" data-pane="3">
       <div class="pane__head">
         <h2>What can he do?</h2>
         <p>Switch on what your server needs. The tier and price on the right update as you go — you never have to work out which plan you are in.</p>
@@ -106,7 +140,7 @@
     </section>
 
     <!-- 4 · Voice -->
-    <section class="pane" data-pane="3">
+    <section class="pane" data-pane="4">
       <div class="pane__head">
         <h2>How does he listen?</h2>
         <p>Wake phrases are whole phrases, not keywords — capitals and punctuation are ignored on both sides when matching.</p>
@@ -144,13 +178,13 @@
     </section>
 
     <!-- 5 · Plan -->
-    <section class="pane" data-pane="4">
+    <section class="pane" data-pane="5">
       <div class="pane__head">
         <h2>Pick your tier.</h2>
         <p>Your modules need the tier marked <b>required</b>. Go higher for more headroom, or go back and switch modules off to come down.</p>
       </div>
 
-      <div style="display:flex;justify-content:center;margin-bottom:26px">
+      <div style="display:flex;justify-content:center;margin-bottom:26px" data-billing-wrap>
         <div class="toggle" data-billing-b>
           <button data-cycle="monthly" class="is-on">Monthly</button>
           <button data-cycle="annual">Annual <span class="save">2 months free</span></button>
@@ -159,38 +193,87 @@
 
       <div class="tiers" data-plan></div>
 
-      <div class="pane__nav">
-        <button class="btn btn--ghost" data-prev>Back</button>
-        <button class="btn btn--primary" data-next>Review &amp; deploy</button>
-      </div>
-    </section>
-
-    <!-- 6 · Deploy -->
-    <section class="pane" data-pane="5">
-      <div class="deploy-card">
-        <div class="deploy-card__tick">
-          <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12.5l5 5L20 6.5"/></svg>
+      <!-- Managed venue: pick a starting credit pack. -->
+      <div data-credits-block style="margin-top:30px">
+        <div class="split-head">
+          <h2 style="font-size:1.15rem">Starting credits</h2>
+          <span class="aside">Usage is metered against this balance. Top up any time.</span>
         </div>
-        <h3 data-deploy-title>Your bot is ready.</h3>
-        <p>We have registered the Discord application, minted its token, and scoped the invite to exactly the permissions your modules need — nothing more.</p>
-        <div class="invite">
-          <input readonly data-invite value="">
-          <button class="btn btn--primary" data-copy>Copy invite link</button>
-        </div>
+        <div class="packs" data-packs></div>
+        <div class="hint" style="margin-top:12px" data-pack-estimate></div>
       </div>
 
-      <div class="summary" data-summary></div>
-
-      <div class="notice" style="margin-top:24px;border-color:rgba(88,101,242,.3);background:rgba(88,101,242,.07);color:#c7cbff">
-        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="flex-shrink:0;margin-top:2px"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 7.5v.5"/></svg>
-        <span>This is a showcase build. No application is really registered and the invite link above is a generated example — it demonstrates the flow, permission scoping and pricing, not a live checkout.</span>
+      <!-- Enterprise venue: bring your own keys. -->
+      <div data-keys-block style="margin-top:6px">
+        <div class="banner banner--info">
+          <span>You hold the provider accounts, so nothing here is metered or billed by us. Paste keys now or leave them blank and hand them over on the onboarding call — either way the request reaches a human.</span>
+        </div>
+        <div class="card2" data-keyvault></div>
       </div>
 
       <div class="pane__nav">
         <button class="btn btn--ghost" data-prev>Back</button>
-        <a class="btn btn--primary" href="pricing.html" style="margin-left:auto">Compare tiers again</a>
+        <button class="btn btn--primary" data-next>Review &amp; submit</button>
       </div>
     </section>
+
+    <!-- 7 · Submit -->
+    <section class="pane" data-pane="6">
+      <div data-submit-before>
+        <div class="pane__head">
+          <h2>Review and submit.</h2>
+          <p>Submitting sends this to provisioning. The automated steps run immediately; anything needing a person lands in our queue.</p>
+        </div>
+
+        <div class="summary" data-summary></div>
+
+        <div class="card2" style="margin-top:20px">
+          <div class="card2__head"><h3>What happens next</h3></div>
+          <div class="pipe" data-pipeline-preview></div>
+        </div>
+
+        <div class="pane__nav">
+          <button class="btn btn--ghost" data-prev>Back</button>
+          <button class="btn btn--primary" data-submit>Submit request</button>
+        </div>
+      </div>
+
+      <div data-submit-after hidden>
+        <div class="deploy-card">
+          <div class="deploy-card__tick">
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12.5l5 5L20 6.5"/></svg>
+          </div>
+          <h3 data-submitted-title>Request submitted.</h3>
+          <p data-submitted-body></p>
+        </div>
+
+        <div class="card2">
+          <div class="card2__head"><h3>Provisioning</h3><span class="aside" data-request-id></span></div>
+          <div class="pipe" data-pipeline-live></div>
+        </div>
+
+        <div data-invite-block hidden style="margin-top:18px">
+          <div class="card2">
+            <div class="card2__head"><h3>Invite link</h3><span class="aside">Scoped to the modules you chose</span></div>
+            <div class="invite">
+              <input readonly data-invite value="">
+              <button class="btn btn--primary" data-copy>Copy</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="notice" style="margin-top:22px;border-color:rgba(88,101,242,.3);background:rgba(88,101,242,.07);color:#c7cbff">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="flex-shrink:0;margin-top:2px"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 7.5v.5"/></svg>
+          <span>Showcase build — the request is stored in your browser, not on a server, and no Discord application is really registered. It demonstrates the flow, the queue and the credit maths.</span>
+        </div>
+
+        <div class="pane__nav">
+          <a class="btn btn--ghost" href="admin.html">Open the admin queue</a>
+          <a class="btn btn--primary" href="app.html" style="margin-left:auto">Go to dashboard</a>
+        </div>
+      </div>
+    </section>
+
   </main>
 
   <!-- ============ RAIL ============ -->
@@ -235,6 +318,7 @@
 </footer>
 
 <script src="js/catalog.js"></script>
+<script src="js/platform.js"></script>
 <script src="js/site.js"></script>
 <script src="js/build.js"></script>
 </body>

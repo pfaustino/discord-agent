@@ -9,7 +9,8 @@
   var C = window.CATALOG;
   if (!C) return;
 
-  var STEPS = ['Identity', 'Personality', 'Capabilities', 'Voice', 'Plan', 'Deploy'];
+  var STEPS = ['Venue', 'Identity', 'Personality', 'Capabilities', 'Voice', 'Plan', 'Submit'];
+  var P = window.PLATFORM;
   var STORE_KEY = 'max-build-v1';
 
   var ACCENTS = [
@@ -122,6 +123,13 @@
 
   var state = {
     step: 0,
+    venue: 'managed',
+    accountName: '',
+    email: '',
+    serverName: '',
+    packId: 'pack-50',
+    keys: { openrouter: '', transcription: '', fish: '' },
+    requestId: null,
     name: 'Max',
     tagline: 'Moderator, engineer, and the one who remembers.',
     accent: 'blurple',
@@ -234,6 +242,47 @@
 
   /* ---------- static renders (built once) ---------- */
 
+  $('[data-venues]').innerHTML = P.VENUES.map(function (v) {
+    return (
+      '<button class="venue" data-venue="' + v.id + '">' +
+      '<h3>' + v.name + '</h3>' +
+      '<div class="tagline">' + v.tagline + '</div>' +
+      '<p>' + v.detail + '</p>' +
+      '<dl>' +
+      '<div><dt>Best for</dt><dd>' + v.forWho + '</dd></div>' +
+      '<div><dt>Billing</dt><dd>' + v.billing + '</dd></div>' +
+      '<div><dt>Setup</dt><dd>' + v.setup + '</dd></div>' +
+      '</dl></button>'
+    );
+  }).join('');
+
+  $('[data-packs]').innerHTML = P.CREDIT_PACKS.map(function (pack) {
+    var save = P.packSavingPct(pack);
+    return (
+      '<button class="pack" data-pack="' + pack.id + '">' +
+      (save > 0 ? '<span class="pack__save">save ' + save + '%</span>' : '') +
+      '<div class="pack__credits">' + P.fmt.compact(pack.credits) + '</div>' +
+      '<div class="pack__price">credits · ' + P.fmt.money(pack.price) + '</div>' +
+      '</button>'
+    );
+  }).join('');
+
+  var KEY_FIELDS = [
+    { id: 'openrouter', name: 'OpenRouter API key', hint: 'Powers every AI reply and all background work.' },
+    { id: 'transcription', name: 'Transcription key (OpenAI or Groq)', hint: 'Only needed if you enabled voice.' },
+    { id: 'fish', name: 'Fish Audio key', hint: 'Only needed for spoken replies. edge-tts is the free fallback.' },
+  ];
+  $('[data-keyvault]').innerHTML = KEY_FIELDS.map(function (k) {
+    return (
+      '<div class="keyrow"><div>' +
+      '<div class="keyrow__name">' + k.name + '</div>' +
+      '<div class="keyrow__hint">' + k.hint + '</div>' +
+      '<input type="password" autocomplete="off" spellcheck="false" ' +
+      'placeholder="paste or leave blank" data-key="' + k.id + '">' +
+      '</div><div><span class="pill pill--idle" data-keystate="' + k.id + '">empty</span></div></div>'
+    );
+  }).join('');
+
   $('[data-swatches]').innerHTML = ACCENTS.map(function (a) {
     return (
       '<button class="swatch" data-accent="' + a.id + '" aria-label="' + a.id + '" ' +
@@ -302,6 +351,20 @@
     );
   }).join('');
 
+  function pipelineHTML(stageId) {
+    var at = stageId ? P.PIPELINE_INDEX[stageId] : -1;
+    return P.PIPELINE.map(function (step, i) {
+      var cls = i < at ? ' is-done' : (i === at ? ' is-on' : '');
+      return (
+        '<div class="pipe__step' + cls + '">' +
+        '<span class="pipe__dot">' + (i < at ? '&#10003;' : (i + 1)) + '</span>' +
+        '<span class="pipe__name">' + step.name + '</span>' +
+        '<span class="pipe__auto">' + (step.auto ? 'automatic' : 'needs a person') + '</span>' +
+        '</div>'
+      );
+    }).join('');
+  }
+
   /* ---------- live render ---------- */
 
   function render() {
@@ -316,6 +379,21 @@
       s.classList.toggle('is-on', i === state.step);
       s.classList.toggle('is-done', i < state.step);
     });
+
+    /* step 0 — venue & account */
+    document.querySelectorAll('[data-venue]').forEach(function (el) {
+      el.classList.toggle('is-on', el.dataset.venue === state.venue);
+    });
+    var enterprise = state.venue === 'enterprise';
+    $('[data-venue-note]').innerHTML = enterprise
+      ? '<div class="banner banner--warn" style="margin-top:20px">'
+        + '<span>Enterprise requests always reach a person — we do not auto-provision '
+        + 'against keys we did not issue. Expect a short onboarding call before the bot '
+        + 'goes live.</span></div>'
+      : '';
+    $('#acct').value = state.accountName;
+    $('#email').value = state.email;
+    $('#servername').value = state.serverName;
 
     /* step 1 */
     $('#botname').value = state.name;
@@ -374,7 +452,27 @@
     $('[data-window-val]').textContent =
       state.window === 0 ? 'off' : state.window + ' seconds';
 
-    /* step 5 */
+    /* step 5 — plan; managed buys credits, enterprise brings keys */
+    $('[data-credits-block]').hidden = enterprise;
+    $('[data-keys-block]').hidden = !enterprise;
+    $('[data-billing-wrap]').style.display = enterprise ? 'none' : '';
+
+    document.querySelectorAll('[data-pack]').forEach(function (el) {
+      el.classList.toggle('is-on', el.dataset.pack === state.packId);
+    });
+    $('[data-pack-estimate]').innerHTML = packEstimate();
+
+    Object.keys(state.keys).forEach(function (k) {
+      var input = document.querySelector('[data-key="' + k + '"]');
+      if (input && input.value !== state.keys[k]) input.value = state.keys[k];
+      var badge = document.querySelector('[data-keystate="' + k + '"]');
+      if (badge) {
+        var set = Boolean(state.keys[k].trim());
+        badge.className = 'pill ' + (set ? 'pill--ok' : 'pill--idle');
+        badge.textContent = set ? 'supplied' : 'empty';
+      }
+    });
+
     $('[data-plan]').innerHTML = C.TIERS.map(function (t, i) {
       var locked = i < reqIdx;
       var missing = state.modules.filter(function (id) {
@@ -410,10 +508,29 @@
       );
     }).join('');
 
-    /* step 6 */
-    $('[data-deploy-title]').textContent = state.name + ' is ready.';
-    $('[data-invite]').value = inviteURL();
+    /* step 6 — review & submit */
+    var submitted = Boolean(state.requestId);
+    $('[data-submit-before]').hidden = submitted;
+    $('[data-submit-after]').hidden = !submitted;
     $('[data-summary]').innerHTML = summaryHTML(tier, grad);
+    $('[data-pipeline-preview]').innerHTML = pipelineHTML(null);
+
+    if (submitted) {
+      var req = findRequest(state.requestId);
+      var stage = req ? req.stage : 'submitted';
+      $('[data-request-id]').textContent = state.requestId;
+      $('[data-pipeline-live]').innerHTML = pipelineHTML(stage);
+      $('[data-submitted-title]').textContent = stage === 'ready'
+        ? state.name + ' is ready.'
+        : 'Request submitted.';
+      $('[data-submitted-body]').textContent = stage === 'ready'
+        ? 'Provisioned and waiting to be invited.'
+        : (enterprise
+          ? 'The automated checks have run. An engineer will be in touch to take the key handover before anything is provisioned.'
+          : 'The automated checks have run. A person confirms the module set, then provisioning is automatic.');
+      $('[data-invite-block]').hidden = stage !== 'ready';
+      if (stage === 'ready') $('[data-invite]').value = inviteURL();
+    }
 
     /* rail */
     var rail = $('[data-rail-avatar]');
@@ -439,6 +556,67 @@
       : '<span class="chip chip--muted">No modules — he will just sit there</span>';
 
     save();
+  }
+
+  function currentPack() {
+    return P.CREDIT_PACKS.filter(function (p) { return p.id === state.packId; })[0]
+      || P.CREDIT_PACKS[0];
+  }
+
+  /* How long a pack lasts, from the same rate card the dashboard bills on.
+     Deliberately conservative: it assumes voice is used every day when voice
+     modules are on, because a low estimate that runs out early is the one
+     complaint this number can actually cause. */
+  function packEstimate() {
+    var pack = currentPack();
+    var rate = function (id) {
+      return P.CREDIT_RATES.filter(function (r) { return r.id === id; })[0].credits;
+    };
+    var repliesPerDay = 250;
+    var perDay = repliesPerDay * rate('reply-standard')
+      + repliesPerDay * 3 * rate('background')
+      + (hasVoice() ? 20 * (rate('transcription') + rate('tts-fish')) : 0);
+    var days = Math.floor(pack.credits / perDay);
+    return P.fmt.credits(pack.credits) + ' credits &middot; ' + P.fmt.money(pack.price)
+      + ' &mdash; roughly <b>' + days + ' days</b> at ' + repliesPerDay
+      + ' replies/day' + (hasVoice() ? ' plus 20 voice minutes/day' : '') + '.';
+  }
+
+  function findRequest(id) {
+    return P.Store.read().requests.filter(function (r) { return r.id === id; })[0] || null;
+  }
+
+  /* Submitting writes the request into the shared store, runs the automatic
+     stages immediately, and stops at the first one needing a person. */
+  function submitRequest() {
+    var tier = activeTier();
+    var id = P.newId('req');
+    var request = {
+      id: id,
+      venue: state.venue,
+      accountName: state.accountName || 'Unnamed account',
+      email: state.email || '',
+      serverName: state.serverName || 'Unnamed server',
+      botName: state.name,
+      accent: state.accent,
+      tier: tier.id,
+      modules: state.modules.slice(),
+      wake: state.wake.slice(),
+      voiceModel: state.voice,
+      followupSec: state.window,
+      persona: state.persona,
+      packId: state.venue === 'managed' ? state.packId : null,
+      keys: state.venue === 'enterprise' ? {
+        openrouter: state.keys.openrouter.trim() ? 'supplied' : 'pending',
+        transcription: state.keys.transcription.trim() ? 'supplied' : 'pending',
+        fish: state.keys.fish.trim() ? 'supplied' : 'not-supplied',
+      } : null,
+      stage: 'review',
+      submittedAt: Date.now(),
+      notes: '',
+    };
+    P.Store.update(function (data) { data.requests.unshift(request); });
+    state.requestId = id;
   }
 
   function summaryHTML(tier, grad) {
@@ -519,6 +697,28 @@
 
     var jump = t.closest('[data-goto]');
     if (jump) return go(parseInt(jump.dataset.goto, 10));
+
+    var venue = t.closest('[data-venue]');
+    if (venue) {
+      state.venue = venue.dataset.venue;
+      // Enterprise never buys credits, and managed never hands us keys —
+      // clear the other side so a half-filled switch cannot be submitted.
+      if (state.venue === 'enterprise') state.packId = null;
+      else state.keys = { openrouter: '', transcription: '', fish: '' };
+      if (!state.packId && state.venue === 'managed') state.packId = 'pack-50';
+      return render();
+    }
+
+    var pack = t.closest('[data-pack]');
+    if (pack) { state.packId = pack.dataset.pack; return render(); }
+
+    var submit = t.closest('[data-submit]');
+    if (submit) {
+      submitRequest();
+      render();
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      return;
+    }
 
     var sw = t.closest('[data-accent]');
     if (sw) { state.accent = sw.dataset.accent; return render(); }
@@ -610,6 +810,21 @@
     if (!mod) return;
     e.preventDefault();
     mod.click();
+  });
+
+  [['#acct', 'accountName'], ['#email', 'email'], ['#servername', 'serverName']]
+    .forEach(function (pair) {
+      $(pair[0]).addEventListener('input', function (e) {
+        state[pair[1]] = e.target.value;
+        save();
+      });
+    });
+
+  document.querySelectorAll('[data-key]').forEach(function (input) {
+    input.addEventListener('input', function (e) {
+      state.keys[input.dataset.key] = e.target.value;
+      render();
+    });
   });
 
   $('#botname').addEventListener('input', function (e) {

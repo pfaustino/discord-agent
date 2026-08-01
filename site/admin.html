@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Provisioning queue — Max (internal)</title>
+<meta name="robots" content="noindex">
+<meta name="theme-color" content="#08090d">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='26' fill='%235865f2'/><text y='72' x='50' text-anchor='middle' font-size='60' font-family='sans-serif' font-weight='bold' fill='white'>M</text></svg>">
+<link rel="stylesheet" href="css/site.css">
+</head>
+<body>
+
+<header class="nav">
+  <div class="wrap nav__inner">
+    <a href="index.html" class="brand"><span class="brand__mark">M</span><span>Max</span></a>
+    <nav class="nav__links" id="nav-links">
+      <a href="app.html">Dashboard</a>
+      <a href="build.html">Onboarding</a>
+      <a href="admin.html">Admin</a>
+    </nav>
+    <div class="nav__cta">
+      <span class="pill pill--warn">Internal</span>
+      <button class="btn btn--ghost btn--sm" data-reset>Reset demo data</button>
+      <button class="nav__burger" id="burger" aria-label="Menu" aria-expanded="false" aria-controls="nav-links">
+        <svg width="18" height="14" viewBox="0 0 18 14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M1 1h16M1 7h16M1 13h16"/></svg>
+      </button>
+    </div>
+  </div>
+</header>
+
+<main class="wrap" style="padding-bottom:80px">
+
+  <div class="appbar">
+    <div>
+      <div class="appbar__name" style="font-size:1.3rem">Provisioning queue</div>
+      <div class="appbar__sub">Automated stages run on submit. Everything below is what needs a person.</div>
+    </div>
+    <div class="appbar__right">
+      <span class="pill" data-count-waiting>—</span>
+      <span class="pill" data-count-total>—</span>
+    </div>
+  </div>
+
+  <div class="grid-3" style="margin-bottom:26px">
+    <div class="card2">
+      <div class="metric">
+        <span class="metric__value" data-stat-review>—</span>
+        <span class="metric__label">awaiting review</span>
+      </div>
+      <div class="metric__sub">Module set needs confirming before provisioning.</div>
+    </div>
+    <div class="card2">
+      <div class="metric">
+        <span class="metric__value" data-stat-ent>—</span>
+        <span class="metric__label">enterprise key handovers</span>
+      </div>
+      <div class="metric__sub">Never auto-provisioned. Always a call first.</div>
+    </div>
+    <div class="card2">
+      <div class="metric">
+        <span class="metric__value" data-stat-ready>—</span>
+        <span class="metric__label">provisioned</span>
+      </div>
+      <div class="metric__sub">Invite issued, dashboard access granted.</div>
+    </div>
+  </div>
+
+  <div class="split-head">
+    <h2>Requests</h2>
+    <span class="aside">Newest first. Click a row to manage what gets switched on.</span>
+  </div>
+
+  <div class="dtable-wrap" style="margin-bottom:24px">
+    <div class="dtable-scroll">
+      <table class="dtable" data-queue></table>
+    </div>
+  </div>
+
+  <section data-detail hidden>
+    <div class="split-head">
+      <h2 data-detail-title>—</h2>
+      <span class="aside" data-detail-id></span>
+    </div>
+
+    <div class="card2" style="margin-bottom:18px">
+      <div class="card2__head"><h3>Pipeline</h3><span class="aside" data-detail-stage></span></div>
+      <div class="pipe" data-detail-pipe></div>
+      <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:20px;padding-top:18px;border-top:1px solid var(--border)">
+        <button class="btn btn--primary" data-advance>Approve &amp; provision</button>
+        <button class="btn btn--ghost" data-hold>Send back to review</button>
+        <span class="hint" style="align-self:center" data-advance-note></span>
+      </div>
+    </div>
+
+    <div class="grid-2" style="margin-bottom:18px">
+      <div class="card2">
+        <div class="card2__head"><h3>Account</h3></div>
+        <div data-detail-account></div>
+      </div>
+      <div class="card2">
+        <div class="card2__head"><h3>Plan</h3></div>
+        <div data-detail-plan></div>
+      </div>
+    </div>
+
+    <div class="card2" style="margin-bottom:18px">
+      <div class="card2__head">
+        <h3>Modules</h3>
+        <span class="aside">Toggling here changes what this customer actually gets</span>
+      </div>
+      <div data-detail-modules></div>
+      <div data-detail-tierwarn></div>
+    </div>
+
+    <div class="card2">
+      <div class="card2__head"><h3>Internal notes</h3><span class="aside">not shown to the customer</span></div>
+      <textarea class="textarea" data-detail-notes placeholder="Context for whoever picks this up next…"></textarea>
+    </div>
+  </section>
+
+  <div class="notice" style="margin-top:26px;border-color:rgba(88,101,242,.3);background:rgba(88,101,242,.07);color:#c7cbff">
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="flex-shrink:0;margin-top:2px"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 7.5v.5"/></svg>
+    <span>Showcase queue — requests live in your browser and nothing is really provisioned. In production this screen is behind staff auth, which is the first thing to build before it goes anywhere near a real domain.</span>
+  </div>
+</main>
+
+<footer class="footer" style="margin-top:0">
+  <div class="wrap">
+    <div class="footer__base" style="border:0;padding-top:0">
+      <span>© <span data-year></span> Max — internal tooling.</span>
+      <span><a href="app.html" style="color:var(--muted)">Customer dashboard</a></span>
+    </div>
+  </div>
+</footer>
+
+<script src="js/catalog.js"></script>
+<script src="js/platform.js"></script>
+<script src="js/site.js"></script>
+<script src="js/admin.js"></script>
+</body>
+</html>
