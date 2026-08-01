@@ -27,19 +27,36 @@ cd site && python3 -m http.server 8000
 
 | File | What it is |
 |---|---|
-| `index.html` | Landing page — hero with a live Discord mock, the six capability pillars, deep-dives on memory / voice / initiative, how-it-works, tier preview, FAQ |
+| `index.html` | Landing page — hero with a live Discord mock, capability pillars, deep-dives on memory / voice / initiative, how-it-works, tier preview, FAQ |
 | `pricing.html` | Four tiers with a monthly/annual toggle, the full capability matrix, add-ons, self-host band, FAQ |
-| `build.html` | Six-step builder: identity → personality → capabilities → voice → plan → deploy, with a live price rail |
+| `build.html` | Onboarding: venue → identity → personality → capabilities → voice → plan → submit, with a live price rail |
+| `app.html` | Customer dashboard — credits, burn rate, usage, top-ups, servers, upgrades. Enterprise accounts get a key vault and usage report instead of a balance |
+| `admin.html` | Internal provisioning queue — approve requests and manage what each customer actually gets |
+
+`PLATFORM-SPEC.md` is the backend contract these screens were written against:
+data model, pipeline, metering rules, API surface, and the things that will
+bite at scale.
 
 ## Files
 
 ```
 css/site.css     design system + every component
-js/catalog.js    tiers, capabilities, add-ons, FAQ — the single source of truth
+js/catalog.js    tiers, capabilities, add-ons, FAQ — the product catalog
+js/platform.js   venues, credit rates, packs, pipeline, and the demo store
 js/site.js       nav, scroll reveals, FAQ rendering, hero motion
 js/tiers.js      tier cards, billing toggle, capability matrix, add-ons
-js/build.js      the builder wizard
+js/build.js      the onboarding wizard
+js/app.js        customer dashboard
+js/admin.js      internal provisioning queue
 ```
+
+## Two sources of truth
+
+`js/catalog.js` owns the **product** — tiers and capabilities. `js/platform.js`
+owns the **business** — venues, credit rates, packs and the provisioning
+pipeline. Screens read from both and write only through `platform.Store`, which
+is localStorage standing in for the backend. Swapping it for `fetch` calls is a
+one-file change; no screen touches storage directly.
 
 Plain scripts rather than ES modules, so the site also opens straight off the
 filesystem without a server in front of it.

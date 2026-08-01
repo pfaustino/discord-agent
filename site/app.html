@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dashboard — Max</title>
+<meta name="description" content="Credits, usage, servers and upgrades.">
+<meta name="theme-color" content="#08090d">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='26' fill='%235865f2'/><text y='72' x='50' text-anchor='middle' font-size='60' font-family='sans-serif' font-weight='bold' fill='white'>M</text></svg>">
+<link rel="stylesheet" href="css/site.css">
+</head>
+<body>
+
+<header class="nav">
+  <div class="wrap nav__inner">
+    <a href="index.html" class="brand"><span class="brand__mark">M</span><span>Max</span></a>
+    <nav class="nav__links" id="nav-links">
+      <a href="app.html">Dashboard</a>
+      <a href="build.html">Add a server</a>
+      <a href="pricing.html">Pricing</a>
+      <a href="admin.html">Admin</a>
+    </nav>
+    <div class="nav__cta">
+      <button class="btn btn--ghost btn--sm" data-venue-toggle>View as enterprise</button>
+      <a href="build.html" class="btn btn--primary btn--sm">Add a server</a>
+      <button class="nav__burger" id="burger" aria-label="Menu" aria-expanded="false" aria-controls="nav-links">
+        <svg width="18" height="14" viewBox="0 0 18 14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M1 1h16M1 7h16M1 13h16"/></svg>
+      </button>
+    </div>
+  </div>
+</header>
+
+<main class="wrap" style="padding-bottom:80px">
+
+  <div class="appbar">
+    <div class="appbar__id">
+      <div class="appbar__avatar" data-acct-initial>N</div>
+      <div>
+        <div class="appbar__name" data-acct-name>—</div>
+        <div class="appbar__sub" data-acct-sub>—</div>
+      </div>
+    </div>
+    <div class="appbar__right">
+      <span class="pill" data-venue-pill>—</span>
+      <span class="pill" data-tier-pill>—</span>
+    </div>
+  </div>
+
+  <div data-low-banner></div>
+
+  <!-- ===== MANAGED: credits ===== -->
+  <section data-managed-block class="stack" style="margin-bottom:26px">
+    <div class="grid-3">
+      <div class="card2">
+        <div class="metric">
+          <span class="metric__value" data-balance>—</span>
+          <span class="metric__label">credits remaining</span>
+        </div>
+        <div class="meter"><span class="meter__fill" data-balance-meter style="width:0"></span></div>
+        <div class="metric__sub" data-balance-sub>—</div>
+      </div>
+      <div class="card2">
+        <div class="metric">
+          <span class="metric__value" data-burn>—</span>
+          <span class="metric__label">credits / day, 7-day average</span>
+        </div>
+        <div class="metric__sub" data-burn-sub>—</div>
+      </div>
+      <div class="card2">
+        <div class="metric">
+          <span class="metric__value" data-days>—</span>
+          <span class="metric__label">days of balance left</span>
+        </div>
+        <div class="metric__sub" data-days-sub>—</div>
+      </div>
+    </div>
+
+    <div class="grid-2">
+      <div class="card2">
+        <div class="card2__head">
+          <h3>Usage</h3>
+          <span class="aside">last 30 days · credits/day</span>
+        </div>
+        <div class="chart" data-chart></div>
+        <div class="chart__axis"><span>30 days ago</span><span>today</span></div>
+        <div class="legend">
+          <span><i style="background:linear-gradient(180deg,#7c6cf5,#5865f2)"></i> weekday</span>
+          <span><i style="background:#3f4666"></i> weekend</span>
+        </div>
+      </div>
+
+      <div class="card2">
+        <div class="card2__head">
+          <h3>Where it went</h3>
+          <span class="aside">last 30 days</span>
+        </div>
+        <div data-breakdown></div>
+      </div>
+    </div>
+
+    <div class="card2">
+      <div class="card2__head">
+        <h3>Buy credits</h3>
+        <span class="aside">Credits never expire</span>
+      </div>
+      <div class="packs" data-packs></div>
+      <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-top:18px">
+        <button class="btn btn--primary" data-buy>Purchase</button>
+        <span class="hint" data-buy-note></span>
+      </div>
+      <div style="margin-top:20px;padding-top:18px;border-top:1px solid var(--border)">
+        <label class="mod" style="cursor:pointer" data-autotopup>
+          <span class="mod__box"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 8.5l3.5 3.5 7.5-8"/></svg></span>
+          <span class="mod__text">
+            <span class="mod__name">Auto top-up</span>
+            <span class="mod__detail" data-autotopup-detail>—</span>
+          </span>
+        </label>
+      </div>
+    </div>
+
+    <div class="card2">
+      <div class="card2__head">
+        <h3>Rate card</h3>
+        <span class="aside">what a credit buys</span>
+      </div>
+      <div class="dtable-wrap" style="border:0">
+        <div class="dtable-scroll">
+          <table class="dtable" data-rates></table>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== ENTERPRISE: keys ===== -->
+  <section data-enterprise-block class="stack" style="margin-bottom:26px" hidden>
+    <div class="banner banner--info">
+      <span><b>Bring your own keys.</b> Usage runs on your provider accounts and is never billed by us. The numbers below are reported for your own reconciliation — check them against your provider invoices, not against a balance here.</span>
+    </div>
+
+    <div class="grid-3">
+      <div class="card2">
+        <div class="metric">
+          <span class="metric__value" data-ent-servers>—</span>
+          <span class="metric__label">servers provisioned</span>
+        </div>
+        <div class="metric__sub" data-ent-fee>—</div>
+      </div>
+      <div class="card2">
+        <div class="metric">
+          <span class="metric__value" data-ent-replies>—</span>
+          <span class="metric__label">AI replies, last 30 days</span>
+        </div>
+        <div class="metric__sub">Billed by OpenRouter directly to you.</div>
+      </div>
+      <div class="card2">
+        <div class="metric">
+          <span class="metric__value" data-ent-voice>—</span>
+          <span class="metric__label">voice minutes, last 30 days</span>
+        </div>
+        <div class="metric__sub">Transcription and TTS on your own accounts.</div>
+      </div>
+    </div>
+
+    <div class="card2">
+      <div class="card2__head">
+        <h3>Provider keys</h3>
+        <span class="aside">stored encrypted, never shown again after saving</span>
+      </div>
+      <div data-ent-keys></div>
+    </div>
+  </section>
+
+  <!-- ===== SERVERS ===== -->
+  <section>
+    <div class="split-head">
+      <h2>Servers</h2>
+      <span class="aside" data-servers-note></span>
+    </div>
+    <div class="dtable-wrap">
+      <div class="dtable-scroll">
+        <table class="dtable" data-servers></table>
+      </div>
+    </div>
+  </section>
+
+  <div class="notice" style="margin-top:26px;border-color:rgba(88,101,242,.3);background:rgba(88,101,242,.07);color:#c7cbff">
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="flex-shrink:0;margin-top:2px"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 7.5v.5"/></svg>
+    <span>Showcase dashboard. State lives in your browser, purchases are simulated, and no provider is really called. <button class="btn btn--sm btn--ghost" data-reset style="margin-left:8px">Reset demo data</button></span>
+  </div>
+</main>
+
+<footer class="footer" style="margin-top:0">
+  <div class="wrap">
+    <div class="footer__base" style="border:0;padding-top:0">
+      <span>© <span data-year></span> Max. A showcase site — not a live storefront.</span>
+      <span><a href="index.html" style="color:var(--muted)">Back to overview</a></span>
+    </div>
+  </div>
+</footer>
+
+<script src="js/catalog.js"></script>
+<script src="js/platform.js"></script>
+<script src="js/site.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
