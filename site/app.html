@@ -21,7 +21,7 @@
       <a href="admin.html">Admin</a>
     </nav>
     <div class="nav__cta">
-      <button class="btn btn--ghost btn--sm" data-venue-toggle>View as enterprise</button>
+      <button class="btn btn--ghost btn--sm" data-signout>Sign out</button>
       <a href="build.html" class="btn btn--primary btn--sm">Add a server</a>
       <button class="nav__burger" id="burger" aria-label="Menu" aria-expanded="false" aria-controls="nav-links">
         <svg width="18" height="14" viewBox="0 0 18 14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M1 1h16M1 7h16M1 13h16"/></svg>
@@ -31,6 +31,12 @@
 </header>
 
 <main class="wrap" style="padding-bottom:80px">
+
+  <!-- Sign in / create an account. Replaced by the dashboard once there is a
+       session; the order form deliberately does not require one. -->
+  <div data-auth hidden></div>
+
+  <div data-app hidden>
 
   <div class="appbar">
     <div class="appbar__id">
@@ -186,14 +192,18 @@
 
   <div class="notice" style="margin-top:26px;border-color:rgba(88,101,242,.3);background:rgba(88,101,242,.07);color:#c7cbff">
     <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="flex-shrink:0;margin-top:2px"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 7.5v.5"/></svg>
-    <span>Showcase dashboard. State lives in your browser, purchases are simulated, and no provider is really called. <button class="btn btn--sm btn--ghost" data-reset style="margin-left:8px">Reset demo data</button></span>
+    <span>Balance and usage are live — these are the credits your bots actually
+      metered. Card payment is not wired up yet: you pay us the way we agreed
+      and we put the credits on straight away.</span>
   </div>
+
+  </div><!-- /data-app -->
 </main>
 
 <footer class="footer" style="margin-top:0">
   <div class="wrap">
     <div class="footer__base" style="border:0;padding-top:0">
-      <span>© <span data-year></span> Max. A showcase site — not a live storefront.</span>
+      <span>© <span data-year></span> Max.</span>
       <span><a href="index.html" style="color:var(--muted)">Back to overview</a></span>
     </div>
   </div>

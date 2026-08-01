@@ -2,6 +2,7 @@
 // (48kHz, 16-bit, stereo) in a WAV container and posts it to any
 // OpenAI-compatible /audio/transcriptions endpoint.
 import { TRANSCRIPTION_API_KEY, TRANSCRIPTION_API_URL, TRANSCRIPTION_MODEL } from './config.js';
+import * as credits from './credits/index.js';
 
 // Retries for transient upstream failures (Cloudflare 502s in front of the
 // API, rate limits, dropped connections). Deliberately short and few — a
@@ -49,9 +50,39 @@ export function pcmToWav(pcm) {
   return Buffer.concat([header, pcm]);
 }
 
-/** Transcribe one utterance of raw PCM. Returns "" for silence/junk/errors. */
-export async function transcribePcm(pcm) {
+/** Seconds of audio in a raw PCM buffer, at the format Discord hands us. */
+export function pcmDurationSec(pcm) {
+  if (!pcm?.length) return 0;
+  return pcm.length / (SAMPLE_RATE * CHANNELS * SAMPLE_WIDTH);
+}
+
+/**
+ * Transcribe one utterance of raw PCM. Returns "" for silence/junk/errors.
+ *
+ * Billed per minute of audio, and only when the utterance produced real text.
+ * Silence, noise blips and Whisper's hallucinated filler all return "" and
+ * bill nothing — which is what the rate card promises, and means a room full
+ * of background noise cannot quietly drain a balance. We still paid the
+ * provider for those; that sits in our margin, deliberately.
+ *
+ * Out of credit, this goes quiet rather than throwing: the caller's contract
+ * is "" on anything that isn't speech, and a voice channel simply stops being
+ * listened to. The text path is what explains why.
+ */
+export async function transcribePcm(pcm, { guildId = null } = {}) {
   if (!available() || !pcm || !pcm.length) return '';
+  let billing;
+  try {
+    billing = credits.gate(guildId);
+  } catch (err) {
+    if (err instanceof credits.InsufficientCreditsError) {
+      if (credits.shouldNotify(`transcribe:${guildId}`)) {
+        console.warn(`[transcription] out of credits — not transcribing for guild ${guildId}`);
+      }
+      return '';
+    }
+    throw err;
+  }
   const url = `${TRANSCRIPTION_API_URL.replace(/\/$/, '')}/audio/transcriptions`;
   const form = new FormData();
   form.append('file', new Blob([pcmToWav(pcm)], { type: 'audio/wav' }), 'utterance.wav');
@@ -104,5 +135,10 @@ export async function transcribePcm(pcm) {
     return '';
   }
   if (JUNK.has(text.replace(/[.!?,\s]+$/, '').toLowerCase())) return '';
+  credits.meter(billing, {
+    kind: 'transcription',
+    quantity: pcmDurationSec(pcm) / 60,
+    meta: { model: TRANSCRIPTION_MODEL, seconds: Math.round(pcmDurationSec(pcm) * 10) / 10 },
+  });
   return text;
 }

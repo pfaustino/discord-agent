@@ -5,6 +5,8 @@ import {
   OPENROUTER_API_KEY, OPENROUTER_MODEL,
   OPENROUTER_UTILITY_MODEL, OPENROUTER_BG_HOURLY_CAP,
 } from './config.js';
+import * as credits from './credits/index.js';
+import * as switching from './backends/switching.js';
 
 const API_URL = 'https://openrouter.ai/api/v1/chat/completions';
 
@@ -23,6 +25,25 @@ function bgBudgetCheck() {
     throw new OpenRouterError(`background call budget exhausted (${cap}/hour) — skipping`);
   }
   bgCalls.push(now);
+}
+
+/**
+ * Background calls still available this hour (Infinity when uncapped).
+ *
+ * Exists so a high-frequency caller can leave headroom for the low-frequency
+ * ones instead of racing them for a shared pool. Voice mention detection can
+ * fire on every utterance in a busy channel; memory consolidation runs
+ * occasionally but matters far more, and it lost that race — the whole budget
+ * went to detection and consolidation, de-escalation and proactive
+ * classification all started failing at once.
+ *
+ * Read-only: unlike bgBudgetCheck this does not consume a slot.
+ */
+export function bgBudgetRemaining(now = Date.now()) {
+  const cap = OPENROUTER_BG_HOURLY_CAP;
+  if (cap <= 0) return Infinity;
+  while (bgCalls.length && now - bgCalls[0] > 3600_000) bgCalls.shift();
+  return Math.max(0, cap - bgCalls.length);
 }
 
 // One model in the free pool answers everything with a bare safety verdict
@@ -135,9 +156,20 @@ async function requestCompletion(payload, signal, background) {
     await sleep(wait, signal);
   }
   const label = last.status === 429 ? 'rate limited' : `error ${last.status}`;
-  throw new OpenRouterError(
+  // Park a rate-limited backend so the fallback picker stops offering it. Done
+  // here rather than at the call sites because this is the one place that
+  // knows both which model was asked and what the provider said back — the
+  // message is what distinguishes a per-minute burst limit from a daily quota,
+  // and those need very different cooldowns.
+  if (last.status === 429) {
+    switching.markUnavailable(payload.model, { reason: last.message });
+  }
+  const error = new OpenRouterError(
     `OpenRouter ${label} (${payload.model}${background ? ', background' : ''}): ${last.message}`,
   );
+  error.status = last.status;
+  error.model = payload.model;
+  throw error;
 }
 
 /**
@@ -159,23 +191,55 @@ async function requestCompletion(payload, signal, background) {
  * @param {boolean} [opts.background] mark this as background work: it counts
  *   against the hourly spend cap, and defaults to the cheap utility model
  *   instead of the conversational one
+ * @param {string} [opts.guildId] which server this call is for, so it can be
+ *   billed to that server's account. Omitted means unbilled — which is what
+ *   every self-hosted install gets, and what the tests get.
  * @returns {Promise<string>} the assistant's final reply text
+ * @throws {InsufficientCreditsError} before making any provider call, when
+ *   the guild's account has run dry
  */
 export async function chat(messages, {
   model, maxTokens = 1000, temperature = 0.7, signal,
   tools, toolHandler, maxToolRounds = 4, onToolCalls, background = false,
+  guildId = null,
 } = {}) {
   if (!OPENROUTER_API_KEY) throw new OpenRouterError('OPENROUTER_API_KEY is not set');
+  // Credit first, then the hourly breaker. Both refuse to start work; this
+  // one is the customer-visible reason, and it should win the race to explain
+  // itself rather than being masked by an internal budget message.
+  const billing = credits.gate(guildId);
   if (background) bgBudgetCheck();
   const conversation = [...messages];
   let useTools = Boolean(tools?.length && toolHandler);
   let junkRetries = 0;
 
+  // Billing is per reply, not per HTTP request: a tool loop or a junk re-roll
+  // can take several round trips to produce the one answer the customer
+  // actually receives, and the rate card sells "per reply". The real token
+  // counts ride along on the usage event so margin can be checked against the
+  // provider invoice later, which is what would catch that assumption going
+  // bad for a particularly expensive tool loop.
+  const modelId = model || (background ? OPENROUTER_UTILITY_MODEL : OPENROUTER_MODEL);
+  const spend = {
+    rounds: 0, promptTokens: 0, completionTokens: 0, providerRef: null,
+  };
+  const meterReply = () => credits.meter(billing, {
+    kind: credits.chatKind({ model: modelId, background }),
+    quantity: 1,
+    providerRef: spend.providerRef,
+    meta: {
+      model: modelId,
+      rounds: spend.rounds,
+      prompt_tokens: spend.promptTokens,
+      completion_tokens: spend.completionTokens,
+    },
+  });
+
   // The extra JUNK_RETRIES iterations are re-rolls, not tool rounds — a
   // junk verdict must not eat the model's budget for actually using tools.
   for (let round = 0; round <= maxToolRounds + JUNK_RETRIES; round += 1) {
     const payload = {
-      model: model || (background ? OPENROUTER_UTILITY_MODEL : OPENROUTER_MODEL),
+      model: modelId,
       messages: conversation,
       max_tokens: maxTokens,
       temperature,
@@ -195,6 +259,18 @@ export async function chat(messages, {
         round -= 1; // retry this same round without tools
         continue;
       }
+      // Background work reroutes itself. Nobody is listening at 3am when
+      // memory consolidation fails, so there is no one to offer a choice to —
+      // and the alternative is that consolidation simply stops for the rest
+      // of the day, which is how a free-model daily quota quietly turns into
+      // a bot that has forgotten everything since lunchtime.
+      //
+      // This call still fails: background gets exactly one shot by design, and
+      // retrying it here would have it compete with the conversation for the
+      // same rate limit. The NEXT background call picks up the new model.
+      if (background && err.status === 429 && guildId) {
+        switching.rotateBackground(guildId);
+      }
       throw err;
     }
     const reply = data?.choices?.[0]?.message;
@@ -205,6 +281,10 @@ export async function chat(messages, {
     const usage = data.usage || {};
     console.log(`[llm] ${payload.model}${background ? ' [bg]' : ''} `
       + `in=${usage.prompt_tokens ?? '?'} out=${usage.completion_tokens ?? '?'}`);
+    spend.rounds += 1;
+    spend.promptTokens += usage.prompt_tokens || 0;
+    spend.completionTokens += usage.completion_tokens || 0;
+    if (data?.id) spend.providerRef = data.id;
 
     const toolCalls = reply.tool_calls;
     if (!(toolCalls?.length && useTools)) {
@@ -214,6 +294,10 @@ export async function chat(messages, {
         console.log(`[openrouter] junk safety verdict from ${payload.model} — re-rolling (${junkRetries}/${JUNK_RETRIES})`);
         continue;
       }
+      // Metered here, at the one point a reply is actually produced — never
+      // on the throw paths. A call that failed outright cost the customer
+      // nothing, whatever it cost us.
+      meterReply();
       return content;
     }
 

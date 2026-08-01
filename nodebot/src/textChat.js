@@ -3,6 +3,8 @@
 // shared buffer is the actual fix for text and voice not knowing about
 // each other, not anything specific to this file.
 import { chat, OpenRouterError } from './openrouter.js';
+import * as credits from './credits/index.js';
+import * as switching from './backends/switching.js';
 import { recordTurn, formatForPrompt } from './conversation.js';
 import { TOOL_SCHEMAS, runTool } from './tools.js';
 import { KB_TOOL_SCHEMAS, runTool as runKbTool } from './knowledge.js';
@@ -125,6 +127,20 @@ export async function handleMessage(client, message) {
     source: 'text', userId: message.author.id, channel: channelName,
   });
 
+  // Answering a pending "which backend should I switch to?" offer. Checked
+  // before anything reaches a model, because the model is what's unavailable —
+  // this whole path has to work with the backend down. A message that isn't an
+  // answer falls through and is handled normally, so somebody who ignores the
+  // offer and keeps talking doesn't lose their sentence to it.
+  const answer = switching.resolveOffer(guildId, content);
+  if (answer) {
+    await message.reply({
+      content: switching.applyAnswer(guildId, answer),
+      allowedMentions: { repliedUser: false },
+    });
+    return;
+  }
+
   await message.channel.sendTyping();
   // Attachments are read automatically — no tool call — and folded into the
   // user's message before it reaches the model, same as the Python bot.
@@ -171,6 +187,7 @@ export async function handleMessage(client, message) {
       model, tools,
       toolHandler: toolHandler(client, message, owner),
       maxToolRounds: owner ? OWNER_MAX_TOOL_ROUNDS : MAX_TOOL_ROUNDS,
+      guildId,
     });
     recordTurn(guildId, { source: 'text', channel: channelName, speaker: client.user.username, text: reply });
     // userId null: Max doesn't get a profile card built about himself.
@@ -181,6 +198,34 @@ export async function handleMessage(client, message) {
       await message.reply({ content: reply.slice(i, i + 1990), allowedMentions: { repliedUser: false } });
     }
   } catch (err) {
+    // Text chat is where the out-of-credits notice gets said, because it is
+    // the one surface where somebody definitely just addressed the bot and is
+    // waiting on an answer. Throttled to once an hour per server: a dead
+    // balance must not turn every mention in a busy channel into its own
+    // demand for money.
+    if (err instanceof credits.InsufficientCreditsError) {
+      console.warn(`[credits] out of credits for guild ${guildId}`);
+      if (credits.shouldNotify(guildId)) {
+        await message.reply({
+          content: credits.OUT_OF_CREDITS_MESSAGE,
+          allowedMentions: { repliedUser: false },
+        });
+      }
+      return;
+    }
+    // A rate-limited backend is recoverable and she knows what to switch to,
+    // so she says so rather than dead-ending on "AI is unavailable".
+    if (err instanceof OpenRouterError && err.status === 429) {
+      const options = switching.shortlist(guildId, 'chat');
+      if (options.length) {
+        switching.offer(guildId, 'chat', options);
+        await message.reply({
+          content: switching.offerText(err.model || model, options),
+          allowedMentions: { repliedUser: false },
+        });
+        return;
+      }
+    }
     if (err instanceof OpenRouterError) {
       console.error('OpenRouter error:', err.message);
       await message.reply({ content: 'AI is unavailable right now.', allowedMentions: { repliedUser: false } });

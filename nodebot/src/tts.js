@@ -2,6 +2,7 @@
 // msedge-tts (free, unofficial Edge Read Aloud API) as the fallback.
 import { MsEdgeTTS, OUTPUT_FORMAT } from 'msedge-tts';
 import { EDGE_TTS_VOICE, FISH_API_KEY, FISH_TTS_MODEL, FISH_VOICE_ID } from './config.js';
+import * as credits from './credits/index.js';
 
 const FISH_URL = 'https://api.fish.audio/v1/tts';
 
@@ -89,11 +90,90 @@ async function synthesizeWith(text, limit, backend, label) {
   return Buffer.concat(parts);
 }
 
-/** Returns audio bytes (Buffer) for text, or null if no TTS backend works. */
-export async function synthesize(text) {
+/* ── Measuring what was synthesized ─────────────────────────────────────────
+
+   Fish Audio bills per minute, so metering needs a duration. It is read out
+   of the MP3 that came back rather than guessed from the text length: an
+   estimate made before the call is exactly what the metering rules rule out,
+   and characters-per-second is wrong by a wide margin on a reply full of
+   voice tags, numbers or abbreviations.
+
+   MP3 is a stream of self-contained frames, each carrying its own bitrate in
+   its header. Fish returns constant bitrate, so reading the first frame
+   header and dividing the total byte count by it is exact. */
+
+const MPEG1_L3_BITRATES = [
+  0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 0,
+];
+const MPEG2_L3_BITRATES = [
+  0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160, 0,
+];
+const SAMPLE_RATES = {
+  3: [44100, 48000, 32000], // MPEG 1
+  2: [22050, 24000, 16000], // MPEG 2
+  0: [11025, 12000, 8000],  // MPEG 2.5
+};
+
+/**
+ * Seconds of audio in a constant-bitrate MP3 buffer, or 0 if it can't be read.
+ *
+ * Returning 0 rather than a guess is deliberate: a duration we could not
+ * measure bills nothing, so a format change upstream shows up as revenue
+ * going missing in the usage report rather than as customers being charged
+ * against a number we invented.
+ */
+export function mp3DurationSec(buf) {
+  if (!buf || buf.length < 4) return 0;
+  // Skip an ID3v2 tag if there is one — its header carries a syncsafe length.
+  let i = 0;
+  if (buf.length > 10 && buf[0] === 0x49 && buf[1] === 0x44 && buf[2] === 0x33) {
+    i = 10 + ((buf[6] & 0x7f) << 21 | (buf[7] & 0x7f) << 14
+      | (buf[8] & 0x7f) << 7 | (buf[9] & 0x7f));
+  }
+  for (; i + 3 < buf.length; i += 1) {
+    if (buf[i] !== 0xff || (buf[i + 1] & 0xe0) !== 0xe0) continue;
+    const versionBits = (buf[i + 1] >> 3) & 0x03;
+    const layerBits = (buf[i + 1] >> 1) & 0x03;
+    if (versionBits === 1 || layerBits !== 1) continue; // reserved, or not Layer III
+    const bitrateIndex = (buf[i + 2] >> 4) & 0x0f;
+    const sampleIndex = (buf[i + 2] >> 2) & 0x03;
+    if (bitrateIndex === 0 || bitrateIndex === 15 || sampleIndex === 3) continue;
+    const table = versionBits === 3 ? MPEG1_L3_BITRATES : MPEG2_L3_BITRATES;
+    const kbps = table[bitrateIndex];
+    if (!kbps) continue;
+    return ((buf.length - i) * 8) / (kbps * 1000);
+  }
+  return 0;
+}
+
+/**
+ * Returns audio bytes (Buffer) for text, or null if no TTS backend works.
+ *
+ * Only the Fish path bills. edge-tts is free to us and free to the customer,
+ * which also means a managed bot that has run out of Fish quota degrades to a
+ * lesser voice rather than to silence.
+ *
+ * There is no credit gate here. By the time a reply is being spoken the
+ * expensive part — generating it — has already been gated and paid for, and
+ * refusing to speak a reply that already exists would strand the bot
+ * mid-conversation for the sake of a few credits.
+ */
+export async function synthesize(text, { guildId = null } = {}) {
   if (fishEnabled()) {
     const audio = await synthesizeWith(text, FISH_CHUNK, fish, 'Fish');
-    if (audio) return audio;
+    if (audio) {
+      const seconds = mp3DurationSec(audio);
+      if (seconds > 0) {
+        credits.meter(credits.contextFor(guildId), {
+          kind: 'tts-fish',
+          quantity: seconds / 60,
+          meta: { model: FISH_TTS_MODEL, seconds: Math.round(seconds * 10) / 10 },
+        });
+      } else {
+        console.warn('[tts] could not read a duration from the Fish audio — not billing it');
+      }
+      return audio;
+    }
   }
   return synthesizeWith(stripVoiceTags(text), EDGE_CHUNK, edge, 'edge');
 }
