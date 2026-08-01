@@ -25,6 +25,25 @@ function bgBudgetCheck() {
   bgCalls.push(now);
 }
 
+/**
+ * Background calls still available this hour (Infinity when uncapped).
+ *
+ * Exists so a high-frequency caller can leave headroom for the low-frequency
+ * ones instead of racing them for a shared pool. Voice mention detection can
+ * fire on every utterance in a busy channel; memory consolidation runs
+ * occasionally but matters far more, and it lost that race — the whole budget
+ * went to detection and consolidation, de-escalation and proactive
+ * classification all started failing at once.
+ *
+ * Read-only: unlike bgBudgetCheck this does not consume a slot.
+ */
+export function bgBudgetRemaining(now = Date.now()) {
+  const cap = OPENROUTER_BG_HOURLY_CAP;
+  if (cap <= 0) return Infinity;
+  while (bgCalls.length && now - bgCalls[0] > 3600_000) bgCalls.shift();
+  return Math.max(0, cap - bgCalls.length);
+}
+
 // One model in the free pool answers everything with a bare safety verdict
 // ("user safety safe"). Detect that and re-roll so the free router picks a
 // different model, rather than passing the junk through as Max's reply.

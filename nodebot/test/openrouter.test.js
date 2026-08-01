@@ -307,3 +307,37 @@ test('a non-retryable error fails immediately', () => {
     },
   );
 });
+
+// -- background budget headroom ----------------------------------------------
+
+import { bgBudgetRemaining } from '../src/openrouter.js';
+
+test('budget headroom can be read without consuming any', () => {
+  // The whole point of exposing this: voice mention detection checks it on
+  // every candidate utterance and must not spend a slot to find out. An
+  // earlier version of detection had no such check, raced memory
+  // consolidation for the shared pool, and won — consolidation, de-escalation
+  // and proactive classification all started failing at once.
+  const first = bgBudgetRemaining();
+  assert.equal(bgBudgetRemaining(), first);
+  assert.equal(bgBudgetRemaining(), first);
+  assert.ok(first > 0);
+});
+
+test('a consumed background call reduces the headroom', () => withFetch(
+  async () => jsonResponse({ choices: [{ message: { content: 'ok' } }] }),
+  async () => {
+    const before = bgBudgetRemaining();
+    await chat([{ role: 'user', content: 'hi' }], { background: true });
+    assert.equal(bgBudgetRemaining(), before - 1);
+  },
+));
+
+test('a foreground call does not touch the background budget', () => withFetch(
+  async () => jsonResponse({ choices: [{ message: { content: 'ok' } }] }),
+  async () => {
+    const before = bgBudgetRemaining();
+    await chat([{ role: 'user', content: 'hi' }]);
+    assert.equal(bgBudgetRemaining(), before);
+  },
+));
