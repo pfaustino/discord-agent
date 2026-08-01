@@ -14,6 +14,7 @@
 // decision — spoken or silent — is logged with its reasons.
 import { ChannelType } from 'discord.js';
 import { chat, OpenRouterError } from './openrouter.js';
+import { InsufficientCreditsError } from './credits/index.js';
 import { makeAssessment, stateFromDict, decide } from './deescalation.js';
 import { formatForPrompt } from './conversation.js';
 import { logAction } from './utils.js';
@@ -120,8 +121,13 @@ async function run(guild, channelId, source) {
         temperature: 0.0,
         maxTokens: 250,
         background: true,
+        guildId,
       });
     } catch (err) {
+      if (err instanceof InsufficientCreditsError) {
+        console.warn('[deesc] out of credits — skipping assessment');
+        return;
+      }
       if (err instanceof OpenRouterError) {
         console.warn('[deesc] assessment failed:', err.message);
         return;

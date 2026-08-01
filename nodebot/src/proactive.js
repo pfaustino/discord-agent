@@ -12,6 +12,7 @@ import path from 'node:path';
 import { ChannelType } from 'discord.js';
 import { DATABASE_PATH } from './config.js';
 import { chat, OpenRouterError } from './openrouter.js';
+import { InsufficientCreditsError } from './credits/index.js';
 import { PressureEngine, SqliteStore, makeSignal, makeProposal, strength } from './pressure/index.js';
 import * as deescalate from './deescalate.js';
 import { botName } from './botName.js';
@@ -157,8 +158,10 @@ async function classifyAndIngest(guild, channelId, userId, author, text, now, co
       temperature: 0.0,
       maxTokens: 300,
       background: true,
+      guildId,
     });
   } catch (err) {
+    if (err instanceof InsufficientCreditsError) return;
     if (err instanceof OpenRouterError) {
       console.warn('[proactive] signal classification failed:', err.message);
       return;
@@ -289,8 +292,13 @@ async function draftAndSpeak(guild, engine, channel, cand, now) {
       model: db.getSetting(guild.id, 'ai_model'),
       temperature: 0.7,
       maxTokens: 500,
+      guildId: guild.id,
     });
   } catch (err) {
+    // Proactive speech is the one path that must stay silent when the
+    // balance is dry — an unprompted "I'm out of credits" in a channel
+    // nobody asked in is the worst possible way to raise it.
+    if (err instanceof InsufficientCreditsError) return;
     if (err instanceof OpenRouterError) {
       console.warn('[proactive] draft failed:', err.message);
       return;
