@@ -251,6 +251,9 @@ test('attaching a Discord server is what makes billing possible', withDb(() => {
   assert.equal(ledger.accountForGuild('4242').account.id, account.id);
   // And ready needs the attachment, not the other way round.
   assert.equal(orders.setServerStatus(server.id, 'ready').status, 'ready');
+  // The bot going live finishes the order too — a queue that still shows work
+  // outstanding for a bot that is already answering stops being believed.
+  assert.equal(orders.getRequest(request.id).stage, 'ready');
 }));
 
 test('two bots cannot claim the same Discord server', withDb(() => {

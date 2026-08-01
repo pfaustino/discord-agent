@@ -317,5 +317,13 @@ export function setServerStatus(serverId, status) {
   getDb().prepare('UPDATE platform_servers SET status = ?, provisioned_at = ? WHERE id = ?')
     .run(status, status === 'ready' ? (server.provisioned_at || now()) : server.provisioned_at,
       String(serverId));
+  // The bot being live IS the order being finished — carry the order to
+  // `ready` with it. Otherwise the queue shows work outstanding for a bot
+  // that is already answering, which is the kind of drift that trains people
+  // to stop believing the queue.
+  if (status === 'ready' && server.request_id) {
+    const request = getRequest(server.request_id);
+    if (request && request.stage === 'provisioning') advance(server.request_id, 'ready');
+  }
   return serializeServer(getServer(serverId));
 }
