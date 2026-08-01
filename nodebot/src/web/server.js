@@ -28,6 +28,7 @@ import {
   oauthConfigured, authorizeUrl, exchangeCode, fetchDiscordUser,
 } from './oauth.js';
 import { chat, OpenRouterError } from '../openrouter.js';
+import * as credits from '../credits/index.js';
 import { PHRASE_LIST_KEYS, parsePhraseList } from '../phrases.js';
 import { botName } from '../botName.js';
 import { logAction } from '../utils.js';
@@ -414,9 +415,17 @@ function buildRoutes(client) {
         const result = await chat([
           { role: 'system', content: prompt },
           { role: 'user', content: body.text },
-        ], { model: db.getSetting(g.id, 'ai_model'), maxTokens: 600, temperature: 0.8 });
+        ], {
+          model: db.getSetting(g.id, 'ai_model'),
+          maxTokens: 600,
+          temperature: 0.8,
+          guildId: g.id,
+        });
         return { text: result.trim() };
       } catch (err) {
+        if (err instanceof credits.InsufficientCreditsError) {
+          throw new HttpError(402, 'Out of credits — top the balance up to use this.');
+        }
         if (err instanceof OpenRouterError) throw new HttpError(502, err.message);
         throw err;
       }

@@ -17,6 +17,7 @@ import prism from 'prism-media';
 
 import { MIN_UTTERANCE_SEC, MIN_UTTERANCE_RMS } from './config.js';
 import { chat, OpenRouterError } from './openrouter.js';
+import { InsufficientCreditsError } from './credits/index.js';
 import { recordTurn, formatForPrompt } from './conversation.js';
 import { VOICE_PROMPT, VOICE_OWNER_ACTION_NOTE, VOICE_PASS } from './persona.js';
 import { buildSystemPrompt } from './systemPrompt.js';
@@ -358,7 +359,7 @@ async function handleUtterance(guild, channel, userId, pcm) {
   if (member?.user.bot) return;
   const name = member?.displayName || `user-${userId}`;
 
-  const text = await transcription.transcribePcm(pcm);
+  const text = await transcription.transcribePcm(pcm, { guildId: guild.id });
   if (!text) return;
 
   // Resolved before the repeat suppressor below, which would otherwise eat
@@ -582,9 +583,14 @@ async function respond(channel, speakerName, speakerId, state, { followUp = fals
       signal: state.controller.signal,
       tools, toolHandler, onToolCalls,
       maxToolRounds: owner ? OWNER_MAX_TOOL_ROUNDS : MAX_TOOL_ROUNDS,
+      guildId: guild.id,
     });
   } catch (err) {
     if (state.cancelled) return; // aborted by a cancel word — expected
+    // Nothing spoken. Transcription has already gone quiet for the same
+    // reason, so the room simply stops getting answers; the text channel is
+    // where the reason gets said.
+    if (err instanceof InsufficientCreditsError) return;
     if (err instanceof OpenRouterError) {
       console.warn('[voice] wake response failed:', err.message);
       return;
@@ -640,7 +646,7 @@ export function isPass(reply) {
 export async function speakInVoice(guild, text) {
   const connection = getVoiceConnection(guild.id);
   if (!connection) return false;
-  const audio = await tts.synthesize(text);
+  const audio = await tts.synthesize(text, { guildId: guild.id });
   if (!audio) return false;
   let player = players.get(guild.id);
   if (!player) {

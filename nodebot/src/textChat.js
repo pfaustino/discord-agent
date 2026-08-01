@@ -3,6 +3,7 @@
 // shared buffer is the actual fix for text and voice not knowing about
 // each other, not anything specific to this file.
 import { chat, OpenRouterError } from './openrouter.js';
+import * as credits from './credits/index.js';
 import { recordTurn, formatForPrompt } from './conversation.js';
 import { TOOL_SCHEMAS, runTool } from './tools.js';
 import { KB_TOOL_SCHEMAS, runTool as runKbTool } from './knowledge.js';
@@ -171,6 +172,7 @@ export async function handleMessage(client, message) {
       model, tools,
       toolHandler: toolHandler(client, message, owner),
       maxToolRounds: owner ? OWNER_MAX_TOOL_ROUNDS : MAX_TOOL_ROUNDS,
+      guildId,
     });
     recordTurn(guildId, { source: 'text', channel: channelName, speaker: client.user.username, text: reply });
     // userId null: Max doesn't get a profile card built about himself.
@@ -181,6 +183,21 @@ export async function handleMessage(client, message) {
       await message.reply({ content: reply.slice(i, i + 1990), allowedMentions: { repliedUser: false } });
     }
   } catch (err) {
+    // Text chat is where the out-of-credits notice gets said, because it is
+    // the one surface where somebody definitely just addressed the bot and is
+    // waiting on an answer. Throttled to once an hour per server: a dead
+    // balance must not turn every mention in a busy channel into its own
+    // demand for money.
+    if (err instanceof credits.InsufficientCreditsError) {
+      console.warn(`[credits] out of credits for guild ${guildId}`);
+      if (credits.shouldNotify(guildId)) {
+        await message.reply({
+          content: credits.OUT_OF_CREDITS_MESSAGE,
+          allowedMentions: { repliedUser: false },
+        });
+      }
+      return;
+    }
     if (err instanceof OpenRouterError) {
       console.error('OpenRouter error:', err.message);
       await message.reply({ content: 'AI is unavailable right now.', allowedMentions: { repliedUser: false } });

@@ -26,6 +26,7 @@
 // down with it. So a local phonetic gate runs first and the model only sees
 // utterances that contain something plausibly name-shaped.
 import { chat, OpenRouterError, bgBudgetRemaining } from './openrouter.js';
+import { InsufficientCreditsError } from './credits/index.js';
 import { normalizePhrase } from './phrases.js';
 import { botName } from './botName.js';
 import * as db from './db.js';
@@ -293,11 +294,14 @@ export async function detectMention(guild, channelId, utterance, {
       maxTokens: CLASSIFY_MAX_TOKENS,
       background: true,
       signal,
+      guildId: guild.id,
     });
   } catch (err) {
-    // Budget exhausted, no API key, provider down — none of which should take
-    // voice down with them. The fast path above already ran, so a clear
-    // "hey amy" still works; this only gives up the misheard ones.
+    // Budget exhausted, out of credit, no API key, provider down — none of
+    // which should take voice down with them. The fast path above already
+    // ran, so a clear "hey amy" still works; this only gives up the misheard
+    // ones.
+    if (err instanceof InsufficientCreditsError) return { mentioned: false, via: 'no-credit' };
     if (err instanceof OpenRouterError) {
       console.warn('[mention] classifier unavailable:', err.message);
       return { mentioned: false, via: 'none' };

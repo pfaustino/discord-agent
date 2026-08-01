@@ -25,6 +25,12 @@ import {
   VOICE_STOP_LISTENING_WORDS, VOICE_FOLLOWUP_WINDOW_SEC, OPENROUTER_MODEL,
 } from './config.js';
 import { SYSTEM_PROMPT, CAPABILITY_PROMPT } from './persona.js';
+// Platform tables (accounts, servers, orders, the credit ledger) live in the
+// same file but are owned by src/platform and src/credits. Only the schema
+// string is imported here — the modules that read and write those tables get
+// the handle back through getDb(), so nothing has to import this module's
+// internals and there is no cycle.
+import { PLATFORM_SCHEMA } from './platform/schema.js';
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS guild_settings (
@@ -223,12 +229,27 @@ export function initDb(path = 'nodebot.db') {
   }
   db = handle;
   db.exec(SCHEMA);
+  db.exec(PLATFORM_SCHEMA);
   return db;
 }
 
 export function closeDb() {
   db?.close();
   db = null;
+}
+
+/**
+ * The open database handle, for the platform and credit modules.
+ *
+ * They keep their own SQL rather than growing this module, but they must
+ * share this one connection: node:sqlite is synchronous and single-writer,
+ * and a second DatabaseSync against the same file would take its own lock and
+ * turn a metering write into SQLITE_BUSY under exactly the concurrency the
+ * bot generates.
+ */
+export function getDb() {
+  if (!db) throw new Error('database not initialised — call initDb() first');
+  return db;
 }
 
 function now() {
