@@ -101,6 +101,15 @@ tools, wake pipeline, prompts, models, limitations, roadmap)
 - Automod: banned words, invite-link blocking, mention-spam limits
 - Mod log channel + persistent action history
 
+**Credits** (only when run as a service — see below)
+- A pooled credit balance per customer account, metered against every
+  billable provider call: AI replies, background work, voice transcription
+  and Fish Audio speech. When the balance hits zero the bot stops replying
+  with AI, and moderation, automod, welcome and every slash command keep
+  working
+- Customer accounts, an order form, a staff queue, and credit issued by hand
+  against an out-of-band payment — there is no card processing
+
 **Dashboard** (mobile-first, works great from a phone)
 - Overview: server + bot stats
 - Members: search, warn/timeout/kick/ban, edit roles
@@ -145,6 +154,7 @@ Create a key at [openrouter.ai/keys](https://openrouter.ai/keys) — this is `OP
    | `FISH_API_KEY` | *(optional)* fish.audio key — natural TTS voice for spoken replies |
    | `FISH_VOICE_ID` | *(optional)* fish.audio voice model reference id to speak with |
    | `FISH_TTS_MODEL` | *(optional)* fish.audio model, default `s2.1-pro-free` (free tier) |
+   | `PLATFORM_STAFF_EMAILS` | *(optional)* comma-separated emails allowed to see the order queue and issue credits. Leave empty unless you are running this as a service |
 
 4. Attach a **Volume** to the service mounted at `/data` (so settings/warnings survive
    redeploys).
@@ -206,6 +216,47 @@ the secret, the dashboard stays password-only.
 Levels are enforced per route on the server, not just hidden in the UI, and a
 route that doesn't declare a level is treated as creator-only — so a new one
 fails closed rather than open.
+
+### Credits, and running this as a service
+
+**If you self-host, this section does not apply and nothing here is switched
+on.** A Discord server is metered only if it has been deliberately registered
+as a customer's bot; a server that has not been is never metered and never
+gated, with no flag to set. That is the default.
+
+Run as a service, the shape is:
+
+1. A customer signs up at `<dashboard>/site/app.html` and fills in the order
+   form at `/site/build.html` — venue, their Discord server, and what they
+   want the bot to do. No account is needed to submit one.
+2. It lands in the staff queue at `/site/admin.html`. Someone gets in a room
+   with them and builds the bot out together — that is the product, not a
+   stage waiting to be automated.
+3. They pay however you agreed. **There is no checkout.** A member of staff
+   issues the credits against a payment reference, which is required.
+4. The bot draws on the account's pooled balance. Every reply, background
+   call, transcribed minute and spoken minute is metered after it happens,
+   from real token and duration counts.
+5. At zero the bot says so once an hour and stops replying with AI. Everything
+   that costs nothing to run keeps running — which is what stops a lapsed
+   account turning into an unmoderated server.
+
+To make an account staff, sign it up and put its email in
+`PLATFORM_STAFF_EMAILS`. That is the bootstrap (the first staff account cannot
+be promoted by an existing one) and the way back in if the database is what you
+cannot reach.
+
+Enterprise customers run on their own provider keys: their usage is recorded
+at list price so they can compare it against their own invoices, and never
+billed or gated.
+
+Full detail — data model, pipeline, metering rules, API, and what is
+deliberately *not* built — is in [`site/PLATFORM-SPEC.md`](site/PLATFORM-SPEC.md).
+
+> One credit is one cent of list price. Internally the ledger counts
+> thousandths of a credit, because background work costs 0.2 credits a call
+> and is the large majority of call volume — on an integer-credit balance it
+> would round to free.
 
 ### Persona: two halves
 
