@@ -111,3 +111,19 @@ test('the derived name is the override when one is set', withDb(() => {
   db.setSetting('1', 'bot_name', 'Pixel');
   assert.ok(voicePhrases(clientNamed('Amy'), '1', 'voice_wake_words').includes('hey pixel'));
 }));
+
+test('{ai} in saved wake words expands to the effective bot name', withDb(() => {
+  db.setSetting('1', 'voice_wake_words', ['hey {ai}', '{ai} you around']);
+  const list = voicePhrases(clientNamed('Helena'), '1', 'voice_wake_words');
+  assert.ok(list.includes('hey helena'));
+  assert.ok(list.includes('helena you around'));
+}));
+
+test('a guild whose {ai} phrases all collapse keeps the shipped defaults', withDb(() => {
+  // Dropping the templates must not leave the server with no wake words at
+  // all — that would make voice unreachable rather than merely over-eager.
+  db.setSetting('1', 'voice_wake_words', ['hey {ai}', '{ai} you around']);
+  const list = voicePhrases(clientNamed('🤖'), '1', 'voice_wake_words');
+  assert.ok(list.length > 0, 'should fall back rather than return nothing');
+  assert.equal(list.includes('hey'), false, 'and never install a bare "hey"');
+}));

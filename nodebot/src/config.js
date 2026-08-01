@@ -40,6 +40,11 @@ export const OPENROUTER_BG_HOURLY_CAP = parseInt(process.env.OPENROUTER_BG_HOURL
 export const GITHUB_TOKEN = process.env.GITHUB_TOKEN || '';
 export const GITHUB_REPO = process.env.GITHUB_REPO || 'seed0001/discord-agent';
 
+// Web search: duck-duck-scrape is blocked from most cloud/datacenter IPs
+// (Railway included). BRAVE_SEARCH_API_KEY enables full Brave Web Search;
+// without it, web_search falls back to DuckDuckGo's limited instant-answer API.
+export const BRAVE_SEARCH_API_KEY = process.env.BRAVE_SEARCH_API_KEY || '';
+
 // Speech-to-text: any OpenAI-compatible /audio/transcriptions endpoint
 // (OpenAI Whisper, Groq, ...) — same env vars as the Python bot.
 export const TRANSCRIPTION_API_KEY = process.env.TRANSCRIPTION_API_KEY || '';
@@ -50,6 +55,15 @@ export const TRANSCRIPTION_MODEL = process.env.TRANSCRIPTION_MODEL || 'whisper-1
 export const FISH_API_KEY = process.env.FISH_API_KEY || '';
 export const FISH_TTS_MODEL = process.env.FISH_TTS_MODEL || 's2.1-pro-free';
 export const FISH_VOICE_ID = process.env.FISH_VOICE_ID || '';
+// Microsoft Edge neural voice when Fish Audio is not configured — any
+// name from https://speech.microsoft.com/portal/voicegallery (e.g.
+// en-US-JennyNeural, en-US-GuyNeural).
+//
+// The default is the voice this shipped with, so adding the knob doesn't
+// silently change how every existing deployment sounds on the next deploy —
+// that is a product decision, and it belongs in someone's environment rather
+// than in a default. Set EDGE_TTS_VOICE to pick a different one.
+export const EDGE_TTS_VOICE = process.env.EDGE_TTS_VOICE || 'en-US-GuyNeural';
 
 // Env-configured fallback defaults (used to seed db.js's DEFAULTS) — the
 // live, per-guild values come from db.getSetting(guildId, 'voice_wake_words'
