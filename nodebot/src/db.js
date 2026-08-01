@@ -103,6 +103,13 @@ export const MEMORY_VERSIONS_KEPT = 10;
 
 export const DEFAULTS = {
   ai_enabled: true,
+  // What the bot calls itself, in prompts, memory and the dashboard. null
+  // means "use the Discord application's own name", which is the default and
+  // the one to prefer — rename the app and everything follows. Set a string
+  // here only to call it something different in this server specifically.
+  // Read through botName.js rather than directly; nothing should reach for
+  // this key on its own.
+  bot_name: null,
   ai_model: OPENROUTER_MODEL,
   // Two halves, edited separately on the dashboard: who he is, and what he
   // can do. A guild that never customises one keeps getting the current text
@@ -124,6 +131,22 @@ export const DEFAULTS = {
   voice_followup_window_sec: VOICE_FOLLOWUP_WINDOW_SEC,
   voice_stop_speaking_words: VOICE_STOP_SPEAKING_WORDS,
   voice_stop_listening_words: VOICE_STOP_LISTENING_WORDS,
+  // How the bot decides it is being spoken to.
+  //   'smart'      — a cheap classifier asks whether the bot's name came up
+  //                  (tolerating mishearings), then the conversational model
+  //                  decides whether that was an address or just a mention.
+  //   'wake_words' — exact phrase matching only, the original behaviour.
+  // Exact wake words still fire instantly in BOTH modes; smart detection is
+  // what catches "hey aim ee" when the transcriber mangles the name.
+  voice_detection_mode: 'smart',
+  // Audible signals, since smart detection made silence ambiguous. Each is
+  // {mode:'tone'} | {mode:'off'} | {mode:'soundboard', soundId, soundGuildId}.
+  // 'declined' defaults off because it fires on conversations the bot decided
+  // NOT to join, which is the most common outcome in a busy room — worth
+  // turning on while tuning, noisy as a permanent default.
+  voice_cue_thinking: { mode: 'tone' },
+  voice_cue_engaging: { mode: 'tone' },
+  voice_cue_declined: { mode: 'off' },
   quiet_mode: false,
   log_channel: null,
   // welcome / goodbye / autorole
@@ -219,6 +242,15 @@ export function getSetting(guildId, key) {
     .get(String(guildId), key);
   if (!row) return DEFAULTS[key];
   return JSON.parse(row.value);
+}
+
+/** Has this guild actually saved this key, as opposed to inheriting the
+ * default? getSetting alone cannot tell the two apart, and the difference
+ * matters wherever a default is derived rather than fixed — see
+ * botName.js voicePhrases(), which must not overwrite a list an admin chose. */
+export function hasSetting(guildId, key) {
+  return db.prepare('SELECT 1 FROM guild_settings WHERE guild_id = ? AND key = ?')
+    .get(String(guildId), key) !== undefined;
 }
 
 export function getAllSettings(guildId) {

@@ -17,6 +17,7 @@ import { chat, OpenRouterError } from './openrouter.js';
 import { makeAssessment, stateFromDict, decide } from './deescalation.js';
 import { formatForPrompt } from './conversation.js';
 import { logAction } from './utils.js';
+import { botName } from './botName.js';
 import * as db from './db.js';
 
 const ASSESS_MIN_INTERVAL = 25.0; // seconds between assessments per channel
@@ -154,7 +155,7 @@ async function act(guild, channelId, decision, assessment) {
 
   if (decision.action === 'notify_mods') {
     await logAction(
-      guild, 'deescalation', 'Max (de-escalation)', `#${channel.name}`,
+      guild, 'deescalation', `${botName(guild.client, guild.id)} (de-escalation)`, `#${channel.name}`,
       `stage ${decision.state.stage} reached — ${assessment.summary} `
       + `[${decision.reasons.join('; ').slice(0, 300)}]`,
     );

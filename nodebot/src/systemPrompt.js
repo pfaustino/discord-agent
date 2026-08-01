@@ -9,6 +9,7 @@
 // Lives here rather than in persona.js because it reads settings, and
 // persona.js is imported BY db.js — putting it there would be a cycle.
 import * as db from './db.js';
+import { botName } from './botName.js';
 import { OWNER_NOTE, MEMBER_NOTE } from './persona.js';
 
 /** The bot's real slash commands, straight from the table index.js loaded.
@@ -41,7 +42,7 @@ export function commandList(client) {
 export function buildSystemPrompt({ client, guild, owner = false, memory = '' }) {
   const persona = db.getSetting(guild.id, 'ai_system_prompt');
   const capabilities = db.getSetting(guild.id, 'ai_capability_prompt');
-  const name = client?.user?.displayName || client?.user?.username || 'Max';
+  const name = botName(client, guild.id);
   const commands = commandList(client);
 
   const selfAwareness = `You are ${name}, the bot that manages the Discord server `

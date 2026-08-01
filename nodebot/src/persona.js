@@ -129,7 +129,39 @@ export const OWNER_NOTE = (
 // every utterance in the channel, including people talking to each other.
 export const VOICE_PASS = 'PASS';
 
-export const VOICE_PROMPT = ({ channel, speaker, followUp = false }) => (
+/** Stage 2 of smart detection. Stage 1 (mention.js) only established that
+ * the bot's name came up; deciding whether that was an ADDRESS or a MENTION
+ * needs the conversation, which is what this framing asks for.
+ *
+ * Kept deliberately concrete. "Decide if you were addressed" on its own gets
+ * answered by an eager model as "well, they said my name, so yes" — the
+ * worked examples are what make it distinguish the two. */
+const MENTION_NOTE = (speaker, heard) => (
+  `Your name just came up: ${speaker} said something that was heard as `
+  + `"${heard}". That is ALL that has been established — a name detector fired, `
+  + 'nothing more.\n\n'
+  + 'Your job now is to work out, from the conversation, which of these it '
+  + 'was:\n'
+  + '  (a) someone SPEAKING TO you — asking you something, giving you an '
+  + 'instruction, or picking up a thread they were having with you. Answer '
+  + 'them.\n'
+  + '  (b) someone SPEAKING ABOUT you to each other — "I asked Amy earlier", '
+  + '"Amy got that wrong", "we should get Amy to do it", explaining you to '
+  + 'somebody, or arguing about you. Do NOT answer.\n'
+  + '  (c) not your name at all — a similar-sounding word, or a different '
+  + `person who happens to share it. Do NOT answer.\n\n`
+  + `For (b) and (c), reply with exactly ${VOICE_PASS} and nothing else — no `
+  + 'explanation, no apology, no greeting, no "just checking in". Butting into '
+  + 'a conversation that was merely about you is the single most annoying '
+  + 'thing you can do, and staying quiet is a correct, deliberate outcome '
+  + 'rather than a failure to answer. When it is genuinely ambiguous, stay '
+  + 'quiet: someone who wanted you will simply ask again, and that costs far '
+  + 'less than talking over people. '
+);
+
+export const VOICE_PROMPT = ({
+  channel, speaker, followUp = false, mention = null,
+}) => (
   `\nRight now you are LIVE in the voice channel "${channel}" — you've been `
   + 'listening and the transcript below is what\'s been said (transcription may '
   + 'have small errors; roll with obvious ones). '
@@ -142,7 +174,9 @@ export const VOICE_PROMPT = ({ channel, speaker, followUp = false }) => (
       + `chatter — reply with exactly ${VOICE_PASS} and nothing else. Do not `
       + 'explain, do not apologize, do not greet anyone. Staying quiet when you '
       + 'were not addressed is the correct move, not a failure. '
-    : `${speaker} just addressed you by your wake word. `)
+    : mention
+      ? MENTION_NOTE(speaker, mention)
+      : `${speaker} just addressed you by your wake word. `)
   + "Jump into the conversation: you know the context, the "
   + "positions people have taken, and the vibe. Weigh in directly and "
   + "conversationally — this will be read (and maybe spoken) aloud in the "

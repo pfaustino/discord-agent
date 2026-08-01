@@ -86,7 +86,21 @@ export const VOICE_STOP_LISTENING_WORDS = parsePhraseList(
   + 'max that is all,thanks max that is all',
 );
 
-// How long after Max finishes speaking he keeps answering without the wake
+// Which of the phrase lists above were actually pinned in the environment.
+//
+// The built-in defaults are written around the name "max", so when nobody has
+// configured anything botName.js derives them from the bot's real name
+// instead — "amy stop speaking" rather than a stop word that can never fire.
+// That is only safe when the value here is a fallback rather than a choice
+// someone made, which is exactly what this records.
+export const VOICE_PHRASES_FROM_ENV = {
+  voice_wake_words: Boolean(process.env.VOICE_WAKE_WORDS),
+  voice_cancel_words: Boolean(process.env.VOICE_CANCEL_WORDS),
+  voice_stop_speaking_words: Boolean(process.env.VOICE_STOP_SPEAKING_WORDS),
+  voice_stop_listening_words: Boolean(process.env.VOICE_STOP_LISTENING_WORDS),
+};
+
+// How long after the bot finishes speaking it keeps answering without the wake
 // word. 0 disables follow-up mode outright. Per-guild override lives in
 // db.js DEFAULTS as voice_followup_window_sec.
 export const VOICE_FOLLOWUP_WINDOW_SEC = parseInt(

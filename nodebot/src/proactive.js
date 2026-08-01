@@ -14,6 +14,7 @@ import { DATABASE_PATH } from './config.js';
 import { chat, OpenRouterError } from './openrouter.js';
 import { PressureEngine, SqliteStore, makeSignal, makeProposal, strength } from './pressure/index.js';
 import * as deescalate from './deescalate.js';
+import { botName } from './botName.js';
 import * as memory from './memory.js';
 import * as tts from './tts.js';
 import * as db from './db.js';
@@ -336,7 +337,7 @@ async function draftAndSpeak(guild, engine, channel, cand, now) {
     return;
   }
   engine.recordSpoken(proposal, now);
-  memory.recordTurn(guild.id, 'Max', display, {
+  memory.recordTurn(guild.id, botName(guild.client, guild.id), display, {
     source: channel.type === ChannelType.GuildVoice ? 'voice' : 'text',
     userId: null,
     channel: channel.name,

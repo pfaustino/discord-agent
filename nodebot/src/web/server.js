@@ -29,6 +29,7 @@ import {
 } from './oauth.js';
 import { chat, OpenRouterError } from '../openrouter.js';
 import { PHRASE_LIST_KEYS, parsePhraseList } from '../phrases.js';
+import { botName } from '../botName.js';
 import { logAction } from '../utils.js';
 import * as logbuffer from '../logbuffer.js';
 import * as voice from '../voice.js';
@@ -343,14 +344,58 @@ function buildRoutes(client) {
       return { ok: true, quiet_mode: on };
     }, { level: 'moderator' }],
 
-    ['GET', '/api/guilds/:guildId/settings', async ({ params }) => (
-      db.getAllSettings(getGuild(client, params.guildId).id)
-    ), { level: 'moderator' }],
+    ['GET', '/api/guilds/:guildId/soundboard', async ({ params }) => {
+      const g = getGuild(client, params.guildId);
+      // Populated over the gateway, but not always before the first dashboard
+      // load — fetch when the cache is cold. A guild with no soundboard, or a
+      // gateway that never sent one, is an empty list rather than an error:
+      // the settings page must still render.
+      let sounds = [...(g.soundboardSounds?.cache?.values?.() || [])];
+      if (!sounds.length && g.soundboardSounds?.fetch) {
+        try {
+          const fetched = await g.soundboardSounds.fetch();
+          sounds = [...(fetched?.values?.() || [])];
+        } catch (err) {
+          console.warn(`[web] soundboard fetch failed for ${g.id}: ${err.message}`);
+          return [];
+        }
+      }
+      return sounds.map((s) => ({
+        id: String(s.soundId ?? s.id),
+        name: s.name,
+        emoji: s.emojiName || null,
+        available: s.available !== false,
+      }));
+    }, { level: 'admin' }],
+
+    ['GET', '/api/guilds/:guildId/settings', async ({ params }) => {
+      const g = getGuild(client, params.guildId);
+      return {
+        ...db.getAllSettings(g.id),
+        // Read-only companions to the stored `bot_name`, so the dashboard can
+        // show what the bot is ACTUALLY called right now (and where that came
+        // from) while leaving the field itself blank for "follow Discord".
+        bot_name_effective: botName(client, g.id),
+        bot_name_source: db.getSetting(g.id, 'bot_name') ? 'override' : 'discord',
+      };
+    }, { level: 'moderator' }],
 
     ['PUT', '/api/guilds/:guildId/settings', async ({ params, body }) => {
       const g = getGuild(client, params.guildId);
       for (const [key, value] of Object.entries(body)) {
+        // The two read-only fields the GET above adds back. Ignore them rather
+        // than 400, so a client that round-trips the whole settings object
+        // still saves cleanly.
+        if (key === 'bot_name_effective' || key === 'bot_name_source') continue;
         if (!(key in db.DEFAULTS)) throw new HttpError(400, `Unknown setting: ${key}`);
+        if (key === 'bot_name') {
+          // Blank means "no override" — fall back to the Discord application
+          // name. Storing '' instead of null would pin the bot to an empty
+          // name everywhere and there would be no way back from the UI.
+          const name = typeof value === 'string' ? value.trim() : '';
+          db.setSetting(g.id, key, name || null);
+          continue;
+        }
         // Phrase lists arrive from the dashboard as raw bracket text
         // ("[hey max] [hey andrew]") and from the API as an array. Both are
         // parsed to a clean, normalized array before storage, so what is

@@ -218,6 +218,38 @@ test('settings round-trip through the API', () => withServer(async (call) => {
   assert.equal(settings.quiet_mode, true);
 }));
 
+test('settings expose the effective bot name, derived from Discord', () => withServer(async (call) => {
+  const settings = await (await call('GET', '/api/guilds/111/settings', { cookie: authCookie() })).json();
+  assert.equal(settings.bot_name, null);
+  assert.equal(settings.bot_name_effective, 'Max');
+  assert.equal(settings.bot_name_source, 'discord');
+}));
+
+test('an override is reported as the effective name', () => withServer(async (call) => {
+  await call('PUT', '/api/guilds/111/settings', { cookie: authCookie(), body: { bot_name: 'Amy' } });
+  const settings = await (await call('GET', '/api/guilds/111/settings', { cookie: authCookie() })).json();
+  assert.equal(settings.bot_name, 'Amy');
+  assert.equal(settings.bot_name_effective, 'Amy');
+  assert.equal(settings.bot_name_source, 'override');
+}));
+
+test('clearing the bot name field reverts to the Discord name', () => withServer(async (call) => {
+  // Storing '' would pin the bot to an empty name with no way back from the UI.
+  await call('PUT', '/api/guilds/111/settings', { cookie: authCookie(), body: { bot_name: 'Amy' } });
+  await call('PUT', '/api/guilds/111/settings', { cookie: authCookie(), body: { bot_name: '  ' } });
+  const settings = await (await call('GET', '/api/guilds/111/settings', { cookie: authCookie() })).json();
+  assert.equal(settings.bot_name, null);
+  assert.equal(settings.bot_name_effective, 'Max');
+}));
+
+test('the read-only name fields can be sent back without a 400', () => withServer(async (call) => {
+  const res = await call('PUT', '/api/guilds/111/settings', {
+    cookie: authCookie(),
+    body: { bot_name_effective: 'Amy', bot_name_source: 'discord', quiet_mode: true },
+  });
+  assert.equal(res.status, 200);
+}));
+
 test('an unknown setting key is rejected rather than stored', () => withServer(async (call) => {
   const res = await call('PUT', '/api/guilds/111/settings', {
     cookie: authCookie(),

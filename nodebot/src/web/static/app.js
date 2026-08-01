@@ -14,6 +14,12 @@ const state = {
 const $ = (sel) => document.querySelector(sel);
 const content = () => $("#content");
 
+/* What the bot is called right now: the per-server override if one is set,
+   otherwise the Discord application's own name. Never hardcode it — the bot
+   gets renamed and every hardcoded label goes stale silently. */
+const botLabel = (settings) =>
+  (settings && settings.bot_name_effective) || (state.me && state.me.name) || "the bot";
+
 /* ---------- API ---------- */
 
 async function api(path, opts = {}) {
@@ -211,6 +217,39 @@ function render() {
   renderers[state.tab]().catch((e) => console.error(e));
 }
 
+/* ---------- voice cues ---------- */
+
+/* Each cue is stored as {mode:"tone"|"off"|"soundboard", soundId}. One <select>
+   covers all three: the fixed options are the two modes, and every soundboard
+   sound in the server is an additional option below them. */
+function cueValue(settings, event) {
+  const cue = settings[`voice_cue_${event}`];
+  if (!cue || cue.mode === "off") return "off";
+  if (cue.mode === "soundboard" && cue.soundId) return `sound:${cue.soundId}`;
+  return "tone";
+}
+
+function cueField(event, label, settings, sounds) {
+  const current = cueValue(settings, event);
+  const option = (value, text) =>
+    `<option value="${esc(value)}" ${current === value ? "selected" : ""}>${esc(text)}</option>`;
+  return `<label class="field"><span class="lbl">${esc(label)}</span>
+    <select id="s-cue-${esc(event)}">
+      ${option("tone", "Tone")}
+      ${option("off", "Nothing")}
+      ${(sounds || []).map((snd) =>
+        option(`sound:${snd.id}`,
+          `Soundboard: ${snd.emoji ? `${snd.emoji} ` : ""}${snd.name}${snd.available ? "" : " (unavailable)"}`)).join("")}
+    </select></label>`;
+}
+
+function readCue(event) {
+  const value = $(`#s-cue-${event}`).value;
+  if (value === "off") return { mode: "off" };
+  if (value.startsWith("sound:")) return { mode: "soundboard", soundId: value.slice(6) };
+  return { mode: "tone" };
+}
+
 /* ---------- overview ---------- */
 
 async function renderOverview() {
@@ -251,7 +290,7 @@ async function renderOverview() {
     </div>` : ""}
     <div class="btn-row" style="margin-top:10px">
       <button class="btn ${g.quiet_mode ? "primary" : ""}" id="quiet-btn">
-        ${g.quiet_mode ? "🔊 Unmute Max" : "🔇 Mute Max (podcast mode)"}
+        ${g.quiet_mode ? `🔊 Unmute ${esc(botLabel(settings))}` : `🔇 Mute ${esc(botLabel(settings))} (podcast mode)`}
       </button>
       <button class="btn danger" id="restart-bot-btn">Restart bot</button>
     </div>
@@ -267,7 +306,7 @@ async function renderOverview() {
       </label>
       <label class="field">
         <span class="lbl-row">
-          <span class="lbl">Capability persona — what Max knows he can do</span>
+          <span class="lbl">Capability persona — what ${esc(botLabel(settings))} knows it can do</span>
           <button class="btn ghost sm enhance-btn" data-target="persona-capability" data-kind="capability">&#x2728; Enhance with AI</button>
         </span>
         <textarea id="persona-capability" rows="6">${esc(settings.ai_capability_prompt)}</textarea>
@@ -310,8 +349,8 @@ async function renderOverview() {
   $("#quiet-btn").onclick = async () => {
     const r = await api(`/guilds/${state.guildId}/quiet`, {
       method: "POST", body: { on: !g.quiet_mode } });
-    toast(r.quiet_mode ? "Max is muted — he's out of voice and silent everywhere."
-                       : "Max is back.");
+    toast(r.quiet_mode ? `${botLabel(settings)} is muted — out of voice and silent everywhere.`
+                       : `${botLabel(settings)} is back.`);
     render();
   };
   $("#restart-bot-btn").onclick = () =>
@@ -734,12 +773,18 @@ async function renderMod() {
 /* ---------- settings ---------- */
 
 async function renderSettings() {
-  const [settings, channels, roles, me] = await Promise.all([
+  const [settings, channels, roles, me, sounds] = await Promise.all([
     api(`/guilds/${state.guildId}/settings`),
     api(`/guilds/${state.guildId}/channels`),
     api(`/guilds/${state.guildId}/roles`),
     api("/me"),
+    // Never fatal: a guild with no soundboard, or a bot without the
+    // permission to read it, still gets a working settings page.
+    api(`/guilds/${state.guildId}/soundboard`).catch(() => []),
   ]);
+  // Lowercased bot name for the example phrases below — the matcher lowercases
+  // everything anyway, so the examples should look the way a saved phrase does.
+  const lower = botLabel(settings).toLowerCase();
   const textChannels = channels.filter((c) => c.type === "text");
   // Bot/integration-managed roles can't be handed out to people, so they're
   // no use as a dashboard-access group.
@@ -752,6 +797,21 @@ async function renderSettings() {
       `<option value="${r.id}" ${String(selected) === r.id ? "selected" : ""}>${esc(r.name)}</option>`).join("");
 
   content().innerHTML = `
+    <div class="section-title">Identity</div>
+    <div class="card">
+      <label class="field"><span class="lbl">Bot name</span>
+        <input id="s-bot_name" value="${esc(settings.bot_name || "")}"
+          placeholder="${esc(me.name)} (from Discord)"></label>
+      <span class="muted">Leave this blank and the bot uses its Discord application
+        name — rename it in the Discord developer portal and everything here follows
+        on the next restart, with nothing to change. Fill it in only to call it
+        something different in this server. The name is used in its prompts, in what
+        it remembers, and in the voice phrases below.
+        ${settings.bot_name_source === "override"
+          ? `Currently overridden to <strong>${esc(settings.bot_name_effective)}</strong> — clear the box to go back to ${esc(me.name)}.`
+          : `Currently <strong>${esc(settings.bot_name_effective)}</strong>, from Discord.`}</span>
+    </div>
+
     <div class="section-title">Welcome &amp; autorole</div>
     <div class="card">
       <label class="field"><span class="lbl">Welcome channel</span>
@@ -796,7 +856,7 @@ async function renderSettings() {
     <div class="card">
       <label class="toggle"><input type="checkbox" id="s-ai_enabled"
         ${settings.ai_enabled ? "checked" : ""}> Enable AI replies</label>
-      <label class="field"><span class="lbl">Model (Max's voice — replies, wake, interjections)</span>
+      <label class="field"><span class="lbl">Model (${esc(botLabel(settings))}'s voice — replies, wake, interjections)</span>
         <input id="s-ai_model" value="${esc(settings.ai_model)}" placeholder="openrouter/free"></label>
       <label class="field"><span class="lbl">Utility model (background: classification, memory, assessments)</span>
         <input id="s-ai_utility_model" value="${esc(settings.ai_utility_model)}" placeholder="openrouter/free"></label>
@@ -807,22 +867,52 @@ async function renderSettings() {
         <span class="muted">The bot always replies when @mentioned, in any channel.</span></label>
     </div>
 
+    <div class="section-title">Voice — how it knows you're talking to it</div>
+    <div class="card">
+      <label class="field"><span class="lbl">Detection</span>
+        <select id="s-voice_detection_mode">
+          <option value="smart" ${settings.voice_detection_mode !== "wake_words" ? "selected" : ""}>Smart detection (recommended)</option>
+          <option value="wake_words" ${settings.voice_detection_mode === "wake_words" ? "selected" : ""}>Exact wake words only</option>
+        </select></label>
+      <span class="muted">Smart detection runs a cheap classifier over what was said
+        to spot ${esc(botLabel(settings))}'s name even when the transcriber mangles it
+        ("hey aim ee"), then lets the main model read the conversation and work out
+        whether it was being <em>spoken to</em> or just <em>spoken about</em> — so
+        "I asked ${esc(botLabel(settings))} earlier" doesn't make it butt in. The
+        wake words below still trigger instantly in either mode. The classifier uses
+        the utility model, the same cheap one memory and de-escalation use.</span>
+    </div>
+
+    <div class="section-title">Voice — cues</div>
+    <div class="card">
+      ${cueField("thinking", "Heard its name, deciding", settings, sounds)}
+      ${cueField("engaging", "About to answer", settings, sounds)}
+      ${cueField("declined", "Decided it wasn't being addressed", settings, sounds)}
+      <span class="muted">Smart detection takes a moment and can legitimately end in
+        silence, which is otherwise indistinguishable from not having heard you.
+        These play a short tone — or a sound from this server's own Discord
+        soundboard — so the room knows what's happening. Soundboard playback needs
+        the bot to have <strong>Use Soundboard</strong> and <strong>Speak</strong>
+        here; if a sound fails it falls back to the tone rather than going silent.
+        ${sounds.length ? "" : "<em>No soundboard sounds found in this server.</em>"}</span>
+    </div>
+
     <div class="section-title">Voice</div>
     <div class="card">
       <label class="field"><span class="lbl">Wake words</span>
         <input id="s-voice_wake_words" value="${esc(brackets(settings.voice_wake_words))}"
-          placeholder="[hey max] [yo max]"></label>
+          placeholder="${esc(`[hey ${lower}] [yo ${lower}]`)}"></label>
       <label class="field"><span class="lbl">Cancel words (abort a pending reply)</span>
         <input id="s-voice_cancel_words" value="${esc(brackets(settings.voice_cancel_words))}"
           placeholder="[never mind] [forget it] [cancel that]"></label>
       <label class="field"><span class="lbl">Stop speaking (cut him off, stay in the conversation)</span>
         <input id="s-voice_stop_speaking_words" value="${esc(brackets(settings.voice_stop_speaking_words))}"
-          placeholder="[max stop speaking] [max be quiet]"></label>
+          placeholder="${esc(`[${lower} stop speaking] [${lower} be quiet]`)}"></label>
       <label class="field"><span class="lbl">Stop listening (end the conversation)</span>
         <input id="s-voice_stop_listening_words" value="${esc(brackets(settings.voice_stop_listening_words))}"
-          placeholder="[max stop listening] [max go to sleep]"></label>
+          placeholder="${esc(`[${lower} stop listening] [${lower} go to sleep]`)}"></label>
       <span class="muted">Put each phrase in its own [brackets] — that way a phrase
-        can contain a comma, like [max, you around?]. Punctuation and capitals are
+        can contain a comma, like [${esc(lower)}, you around?]. Punctuation and capitals are
         ignored when matching, so what you save is the tidied-up version.
         Say a wake word to pull the bot into the conversation; a cancel word right
         after calls it off before he answers. Once he's spoken he keeps listening
@@ -880,7 +970,7 @@ async function renderSettings() {
   $("#memory-view-btn").onclick = async () => {
     const m = await api(`/guilds/${state.guildId}/memory`);
     openModal(`
-      <h2>Max's memory</h2>
+      <h2>${esc(botLabel(settings))}'s memory</h2>
       <div class="section-title">Durable (v${m.durable_version})</div>
       <pre style="white-space:pre-wrap;font-size:12.5px;max-height:30vh;overflow-y:auto">${esc(m.durable || "(empty)")}</pre>
       <div class="section-title">Working (v${m.working_version})</div>
@@ -888,7 +978,7 @@ async function renderSettings() {
       <div class="btn-row"><button class="btn" onclick="closeModal()">Close</button></div>`);
   };
   $("#memory-wipe-btn").onclick = () =>
-    confirmAction("Erase everything Max remembers about this server (working + durable)?",
+    confirmAction(`Erase everything ${botLabel(settings)} remembers about this server (working + durable)?`,
       async () => {
         await api(`/guilds/${state.guildId}/memory`, { method: "DELETE" });
         toast("Memory wiped");
@@ -919,6 +1009,13 @@ async function renderSettings() {
       voice_cancel_words: $("#s-voice_cancel_words").value,
       voice_stop_speaking_words: $("#s-voice_stop_speaking_words").value,
       voice_stop_listening_words: $("#s-voice_stop_listening_words").value,
+      // Blank is meaningful: the server turns it back into null, i.e.
+      // "follow the Discord application name".
+      bot_name: $("#s-bot_name").value.trim(),
+      voice_detection_mode: $("#s-voice_detection_mode").value,
+      voice_cue_thinking: readCue("thinking"),
+      voice_cue_engaging: readCue("engaging"),
+      voice_cue_declined: readCue("declined"),
       log_channel: $("#s-log_channel").value || null,
     };
     await api(`/guilds/${state.guildId}/settings`, { method: "PUT", body });

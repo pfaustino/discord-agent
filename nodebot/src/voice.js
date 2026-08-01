@@ -21,6 +21,9 @@ import { recordTurn, formatForPrompt } from './conversation.js';
 import { VOICE_PROMPT, VOICE_OWNER_ACTION_NOTE, VOICE_PASS } from './persona.js';
 import { buildSystemPrompt } from './systemPrompt.js';
 import { normalizePhrase } from './phrases.js';
+import { botName, voicePhrases } from './botName.js';
+import { detectMention } from './mention.js';
+import { playCue } from './cues.js';
 import * as transcription from './transcription.js';
 import * as tts from './tts.js';
 import { TOOL_SCHEMAS, runTool } from './tools.js';
@@ -48,6 +51,10 @@ const PLAYBACK_WAIT_MS = 120_000;
 const REPEAT_SUPPRESS_MS = 45_000;
 const REPEAT_MAX_CHARS = 30;
 const CONTEXT_TURNS = 40;
+// Context handed to the stage-1 mention classifier. Much smaller than
+// CONTEXT_TURNS: it only needs enough to tell a name from a similar word,
+// and this prompt runs far more often than the conversational one.
+const MENTION_CONTEXT_TURNS = 6;
 const MAX_TOOL_ROUNDS = 4;
 const OWNER_MAX_TOOL_ROUNDS = 8;
 
@@ -195,7 +202,7 @@ async function joinChannel(channel) {
     return;
   }
   console.log(`[voice] listening in #${channel.name}`);
-  const wakeWords = db.getSetting(channel.guild.id, 'voice_wake_words');
+  const wakeWords = voicePhrases(channel.client, channel.guild.id, 'voice_wake_words');
   const hint = wakeWords.length ? ` Say "${wakeWords[0]}" to bring me into the conversation.` : '';
   try {
     await channel.send(`🎙️ Heads-up: an AI is listening to this channel and transcribing speech.${hint}`);
@@ -358,8 +365,8 @@ async function handleUtterance(guild, channel, userId, pcm) {
   // them: "max stop" is well under REPEAT_MAX_CHARS, so saying it twice in a
   // row — exactly what someone does when the first one seems not to have
   // landed — would see the second discarded as a noise blip.
-  const stopsSpeaking = matchesAny(text, db.getSetting(guild.id, 'voice_stop_speaking_words'));
-  const stopsListening = matchesAny(text, db.getSetting(guild.id, 'voice_stop_listening_words'));
+  const stopsSpeaking = matchesAny(text, voicePhrases(guild.client, guild.id, 'voice_stop_speaking_words'));
+  const stopsListening = matchesAny(text, voicePhrases(guild.client, guild.id, 'voice_stop_listening_words'));
 
   // Repeated short phrases from the same user in quick succession are
   // noise-gate hallucinations, not someone actually talking.
@@ -405,7 +412,7 @@ async function handleUtterance(guild, channel, userId, pcm) {
 
   // Cancel words abort a pending wake response ("never mind, Max").
   const pending = pendingWake.get(channel.id);
-  const cancelWords = db.getSetting(guild.id, 'voice_cancel_words');
+  const cancelWords = voicePhrases(guild.client, guild.id, 'voice_cancel_words');
   if (pending && !pending.cancelled && matchesAny(text, cancelWords)) {
     pending.cancelled = true;
     clearTimeout(pending.timer);
@@ -415,21 +422,61 @@ async function handleUtterance(guild, channel, userId, pcm) {
     return;
   }
 
-  // Either the wake word, or the conversation is already live and this is
-  // just the next thing someone said.
-  const wakeWords = db.getSetting(guild.id, 'voice_wake_words');
+  // An exact wake word always wins: zero latency, zero cost, and it is what
+  // someone reaching for a known phrase expects. Everything else depends on
+  // the detection mode.
+  const wakeWords = voicePhrases(guild.client, guild.id, 'voice_wake_words');
   const woken = matchesAny(text, wakeWords);
   const followUp = !woken && isFollowUpOpen(channel.id, now);
+
   if ((woken || followUp) && (!pending || pending.cancelled)) {
-    const state = { cancelled: false, controller: null, timer: null };
-    state.timer = setTimeout(() => {
-      if (state.cancelled) return;
-      respond(channel, name, userId, state, { followUp })
-        .catch((err) => console.error('[voice] wake response failed:', err.message))
-        .finally(() => { if (pendingWake.get(channel.id) === state) pendingWake.delete(channel.id); });
-    }, WAKE_GRACE_MS);
-    pendingWake.set(channel.id, state);
+    scheduleResponse(channel, name, userId, { followUp });
+    return;
   }
+  // A cancelled pending is a "never mind" that already returned above; only a
+  // LIVE one should suppress detection.
+  if (woken || followUp || (pending && !pending.cancelled)) return;
+
+  // Smart detection. Stage 1 only asks "did the bot's name come up at all",
+  // deliberately erring towards yes; stage 2 (inside respond) is what decides
+  // whether that was someone talking TO it or ABOUT it. Running the pass
+  // itself is gated on a live conversation being absent — inside a follow-up
+  // window the bot is already listening and this would be redundant work.
+  if (db.getSetting(guild.id, 'voice_detection_mode') !== 'smart') return;
+  if (!db.getSetting(guild.id, 'ai_enabled')) return;
+  if (db.getSetting(guild.id, 'quiet_mode')) return;
+  // respond() enforces the same cooldown, but checking it only there would
+  // mean spending a classifier call and playing an "I'm thinking" cue for a
+  // reply that then gets silently dropped — worse than not reacting at all.
+  if (now - (lastWake.get(channel.id) || 0) < WAKE_COOLDOWN_MS) return;
+
+  detectMention(guild, channel.id, text, {
+    transcript: formatForPrompt(guild.id, MENTION_CONTEXT_TURNS),
+  }).then(async (verdict) => {
+    if (!verdict.mentioned) return;
+    if (pendingWake.get(channel.id) || isFollowUpOpen(channel.id)) return;
+    console.log(`[voice] [#${channel.name}] mention detected via ${verdict.via}`
+      + `${verdict.heard ? ` ("${verdict.heard}")` : ''}: ${text}`);
+    // Acknowledge before the slow part. The reasoning pass can take a couple
+    // of seconds and may end in a deliberate silence, so without this the
+    // room cannot tell it was heard at all.
+    await playCue(guild, channel, 'thinking', { players });
+    scheduleResponse(channel, name, userId, { mention: verdict.heard || text });
+  }).catch((err) => console.error('[voice] mention detection failed:', err?.message || err));
+}
+
+/** Arm a reply after the grace window, so an immediate "never mind" can still
+ *  cancel it. Shared by the wake-word, follow-up and smart-detection paths so
+ *  all three cancel and de-duplicate identically. */
+function scheduleResponse(channel, name, userId, opts) {
+  const state = { cancelled: false, controller: null, timer: null };
+  state.timer = setTimeout(() => {
+    if (state.cancelled) return;
+    respond(channel, name, userId, state, opts)
+      .catch((err) => console.error('[voice] wake response failed:', err.message))
+      .finally(() => { if (pendingWake.get(channel.id) === state) pendingWake.delete(channel.id); });
+  }, WAKE_GRACE_MS);
+  pendingWake.set(channel.id, state);
 }
 
 /** Re-open the follow-up window once Max has actually finished speaking.
@@ -461,7 +508,7 @@ async function armFollowUp(channel, spoke, epoch) {
   console.log(`[voice] [#${channel.name}] listening for a follow-up for ${seconds}s`);
 }
 
-async function respond(channel, speakerName, speakerId, state, { followUp = false } = {}) {
+async function respond(channel, speakerName, speakerId, state, { followUp = false, mention = null } = {}) {
   const now = Date.now();
   // The wake cooldown exists to stop wake-word spam, and inside a live
   // conversation it would do the opposite of its job: eight seconds is the
@@ -473,6 +520,10 @@ async function respond(channel, speakerName, speakerId, state, { followUp = fals
 
   const guild = channel.guild;
   const owner = isOwner(speakerId);
+  // The name the bot speaks under in the shared conversation buffer. Text
+  // chat records its own turns under the live Discord name, so hardcoding
+  // anything here would put one bot in the transcript under two names.
+  const self = botName(channel.client, guild.id);
   const model = db.getSetting(guild.id, 'ai_model');
   // Same assembly text chat uses — character persona, the real command list,
   // capabilities, owner/member note — so the two surfaces describe the same
@@ -482,7 +533,9 @@ async function respond(channel, speakerName, speakerId, state, { followUp = fals
   const memoryBlock = memory.getContext(guild.id, speakerId);
   let systemPrompt = buildSystemPrompt({
     client: channel.client, guild, owner, memory: memoryBlock,
-  }) + VOICE_PROMPT({ channel: channel.name, speaker: speakerName, followUp });
+  }) + VOICE_PROMPT({
+    channel: channel.name, speaker: speakerName, followUp, mention,
+  });
   if (owner) systemPrompt += VOICE_OWNER_ACTION_NOTE;
   const transcript = formatForPrompt(guild.id, CONTEXT_TURNS);
 
@@ -509,7 +562,7 @@ async function respond(channel, speakerName, speakerId, state, { followUp = fals
   };
   const onToolCalls = owner ? async (toolCalls) => {
     const blurb = describeToolCalls(toolCalls);
-    recordTurn(guild.id, { source: 'voice', channel: channel.name, speaker: 'Max', text: blurb });
+    recordTurn(guild.id, { source: 'voice', channel: channel.name, speaker: self, text: blurb });
     try {
       await channel.send(blurb);
     } catch (err) {
@@ -545,15 +598,23 @@ async function respond(channel, speakerName, speakerId, state, { followUp = fals
   // deliberately does NOT re-arm the window: only a real answer extends the
   // conversation, so idle chatter lets it lapse instead of holding it open
   // (and billing for it) indefinitely.
-  if (followUp && isPass(reply)) {
-    console.log(`[voice] [#${channel.name}] not addressed to Max — passing`);
+  if ((followUp || mention) && isPass(reply)) {
+    // Stage 2 decided this was the bot being talked ABOUT, not to. That is a
+    // correct outcome, but from the room it is indistinguishable from not
+    // having heard — so say so, quietly, if the guild wants it.
+    console.log(`[voice] [#${channel.name}] not addressed to ${self} — passing`);
+    await playCue(guild, channel, 'declined', { players });
     return;
   }
 
   const display = tts.stripVoiceTags(reply) || reply;
-  recordTurn(guild.id, { source: 'voice', channel: channel.name, speaker: 'Max', text: display });
-  // userId null: Max doesn't get a profile card built about himself.
-  memory.recordTurn(guild.id, 'Max', display, {
+  // "Coming in now." Played before the text post and the TTS, so the cue
+  // leads the reply rather than trailing it. playCue resolves once the tone
+  // has finished, which is also what keeps it from colliding with speech.
+  await playCue(guild, channel, 'engaging', { players });
+  recordTurn(guild.id, { source: 'voice', channel: channel.name, speaker: self, text: display });
+  // userId null: the bot doesn't get a profile card built about itself.
+  memory.recordTurn(guild.id, self, display, {
     source: 'voice', userId: null, channel: channel.name,
   });
   try {

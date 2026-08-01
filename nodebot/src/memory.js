@@ -72,8 +72,11 @@ const CONSOLIDATE_PROMPT = ({ today, durable, working, profilesBlock, turnsBlock
   + 'a profile update.\n\n'
   + 'Capture SPECIFICS, not summaries: names, numbers, dates, tool/tech '
   + 'names, exact preferences, personal history, anything concrete. '
+  // Deliberately a name the bot is not called: this is an example of a
+  // MEMBER's project, and using the bot's own name here invited it to file
+  // facts about itself as facts about whoever was talking.
   + '\'they mentioned a project\' is useless; \'building a Discord bot called '
-  + 'Max on Railway, using OpenRouter\' is what you\'re for. When a fact '
+  + 'Pixel on Railway, using OpenRouter\' is what you\'re for. When a fact '
   + 'doesn\'t fit goals/active_projects/constraints/vibe_notes, it still '
   + 'belongs somewhere — put it in notes rather than leaving it out. '
   + 'Never compress a member\'s turns into a vaguer restatement just to '
