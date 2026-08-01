@@ -18,6 +18,7 @@ import prism from 'prism-media';
 import { MIN_UTTERANCE_SEC, MIN_UTTERANCE_RMS } from './config.js';
 import { chat, OpenRouterError } from './openrouter.js';
 import { InsufficientCreditsError } from './credits/index.js';
+import * as switching from './backends/switching.js';
 import { recordTurn, formatForPrompt } from './conversation.js';
 import { VOICE_PROMPT, VOICE_OWNER_ACTION_NOTE, VOICE_PASS } from './persona.js';
 import { buildSystemPrompt } from './systemPrompt.js';
@@ -394,6 +395,22 @@ async function handleUtterance(guild, channel, userId, pcm) {
     .then((proactive) => proactive.feedVoice(guild, channel.id, userId, name, text))
     .catch((err) => console.error('[voice] pressure feed failed:', err?.message || err));
 
+  // "B" / "switch to Haiku" / "switch back" — answering a pending backend
+  // offer. No wake word needed: she just asked a question out loud and is
+  // waiting for the answer, and requiring "hey Max, B" after that would be
+  // absurd. Matched with plain string work, because the backend that would
+  // interpret it is the one that is down.
+  const answer = switching.resolveOffer(guild.id, text);
+  if (answer) {
+    const reply = switching.applyAnswer(guild.id, answer);
+    console.log(`[voice] backend switch by voice: ${text} → ${reply}`);
+    recordTurn(guild.id, {
+      source: 'voice', channel: channel.name, speaker: botName(guild.client, guild.id), text: reply,
+    });
+    await speakInVoice(guild, reply);
+    return;
+  }
+
   // "Max, stop speaking" — barge in. Kills playback and anything in flight,
   // but stays in the conversation, so the next thing said still reaches him.
   if (stopsSpeaking) {
@@ -591,6 +608,19 @@ async function respond(channel, speakerName, speakerId, state, { followUp = fals
     // reason, so the room simply stops getting answers; the text channel is
     // where the reason gets said.
     if (err instanceof InsufficientCreditsError) return;
+    // Rate limited — say so out loud and offer alternatives, rather than
+    // going silent and leaving the room wondering whether she heard them.
+    if (err instanceof OpenRouterError && err.status === 429) {
+      const options = switching.shortlist(guild.id, 'chat');
+      if (options.length) {
+        switching.offer(guild.id, 'chat', options);
+        await speakInVoice(guild, switching.offerText(err.model || model, options));
+        try {
+          await channel.send(switching.offerText(err.model || model, options));
+        } catch { /* the spoken version is the one that matters */ }
+        return;
+      }
+    }
     if (err instanceof OpenRouterError) {
       console.warn('[voice] wake response failed:', err.message);
       return;

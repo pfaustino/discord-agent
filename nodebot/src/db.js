@@ -99,6 +99,18 @@ CREATE TABLE IF NOT EXISTS turns (
     consolidated INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (guild_id, seq)
 );
+-- OpenRouter's model list, refreshed hourly. Cached here so a restart or an
+-- OpenRouter outage still leaves her something to fall back to at the moment
+-- the current backend starts refusing. See backends/catalog.js.
+CREATE TABLE IF NOT EXISTS model_catalog (
+    id               TEXT PRIMARY KEY,
+    name             TEXT NOT NULL,
+    context_length   INTEGER,
+    prompt_price     REAL,
+    completion_price REAL,
+    supports_tools   INTEGER NOT NULL DEFAULT 0,
+    fetched_at       INTEGER NOT NULL
+);
 CREATE INDEX IF NOT EXISTS idx_warnings_guild_user ON warnings (guild_id, user_id);
 CREATE INDEX IF NOT EXISTS idx_logs_guild ON mod_logs (guild_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_memver ON memory_versions (guild_id, kind, version);
@@ -174,6 +186,12 @@ export const DEFAULTS = {
   deesc_harsh_language: false,
   // background/utility model override; null falls back to the env default
   ai_utility_model: null,
+  // What each model was before the last backend switch, so "switch back"
+  // works after she has rerouted around a rate-limited provider. Persisted
+  // rather than held in memory so a redeploy mid-incident doesn't strand a
+  // server on a fallback nobody chose.
+  ai_model_previous: null,
+  ai_utility_model_previous: null,
   // voice monitoring master switch (dashboard start/stop)
   voice_enabled: false,
   // Dashboard access, mapped to this server's own Discord roles. Anyone in a

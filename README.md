@@ -217,6 +217,37 @@ Levels are enforced per route on the server, not just hidden in the UI, and a
 route that doesn't declare a level is treated as creator-only — so a new one
 fails closed rather than open.
 
+### Switching backends when one gets rate limited
+
+Two models are configured per server, and they fail differently:
+
+- **Conversational** (`ai_model`) — somebody just spoke to her and is waiting.
+  On a 429 she says which backend is down and offers three alternatives with
+  what each one costs, then switches when told to. **By voice**: say "B", "the
+  second one", "switch to Haiku", "switch back", or "never mind".
+- **Background** (`ai_utility_model`) — memory, classification, de-escalation.
+  Reroutes itself and logs the switch. Nobody is around to answer at 3am, and
+  the alternative is that memory consolidation quietly stops for the day.
+
+The list of what she can switch *to* comes from OpenRouter's model catalog,
+refreshed hourly and cached in SQLite so a restart or an OpenRouter outage
+still leaves her alternatives at the moment she needs them. A model that
+returns 429 is parked rather than dropped — fifteen minutes for a burst limit,
+six hours for a daily free-model quota, because that one is not lifting soon.
+
+Ask her any time with "what models can you use?" (`list_ai_backends`) or
+"switch to Sonnet" (`switch_ai_backend`, owner only).
+
+> The answer-matching is deliberately plain string work — no model call. The
+> whole feature fires when the backend is unavailable, so anything that needed
+> a model to interpret "switch to B" would be broken exactly when it is needed.
+> That is also why the options are lettered: single letters survive a bad
+> transcription far better than model names do.
+
+Each option shows what it bills at under the rate card, because switching from
+a Haiku-class to an Opus-class model changes a managed customer's per-reply
+cost from 2 credits to 8 — not something to discover on an invoice.
+
 ### Credits, and running this as a service
 
 **If you self-host, this section does not apply and nothing here is switched

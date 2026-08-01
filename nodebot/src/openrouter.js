@@ -6,6 +6,7 @@ import {
   OPENROUTER_UTILITY_MODEL, OPENROUTER_BG_HOURLY_CAP,
 } from './config.js';
 import * as credits from './credits/index.js';
+import * as switching from './backends/switching.js';
 
 const API_URL = 'https://openrouter.ai/api/v1/chat/completions';
 
@@ -155,9 +156,20 @@ async function requestCompletion(payload, signal, background) {
     await sleep(wait, signal);
   }
   const label = last.status === 429 ? 'rate limited' : `error ${last.status}`;
-  throw new OpenRouterError(
+  // Park a rate-limited backend so the fallback picker stops offering it. Done
+  // here rather than at the call sites because this is the one place that
+  // knows both which model was asked and what the provider said back — the
+  // message is what distinguishes a per-minute burst limit from a daily quota,
+  // and those need very different cooldowns.
+  if (last.status === 429) {
+    switching.markUnavailable(payload.model, { reason: last.message });
+  }
+  const error = new OpenRouterError(
     `OpenRouter ${label} (${payload.model}${background ? ', background' : ''}): ${last.message}`,
   );
+  error.status = last.status;
+  error.model = payload.model;
+  throw error;
 }
 
 /**
@@ -246,6 +258,18 @@ export async function chat(messages, {
         useTools = false;
         round -= 1; // retry this same round without tools
         continue;
+      }
+      // Background work reroutes itself. Nobody is listening at 3am when
+      // memory consolidation fails, so there is no one to offer a choice to —
+      // and the alternative is that consolidation simply stops for the rest
+      // of the day, which is how a free-model daily quota quietly turns into
+      // a bot that has forgotten everything since lunchtime.
+      //
+      // This call still fails: background gets exactly one shot by design, and
+      // retrying it here would have it compete with the conversation for the
+      // same rate limit. The NEXT background call picks up the new model.
+      if (background && err.status === 429 && guildId) {
+        switching.rotateBackground(guildId);
       }
       throw err;
     }
