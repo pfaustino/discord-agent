@@ -252,6 +252,36 @@ test('a broken ledger lets the bot keep answering rather than silencing it', () 
   assert.doesNotThrow(() => credits.gate('111'));
 });
 
+test('the free paths cannot reach a billable provider at all', () => {
+  // The promise is that moderation, automod, welcome and the slash commands
+  // keep working at a zero balance — that is what stops a lapsed account
+  // becoming an unmoderated server. Today they hold because those modules
+  // never call a paid provider, which is a stronger guarantee than gating
+  // them correctly. This test is what keeps it that way: an import added
+  // here would silently put moderation behind the credit gate.
+  const FREE = [
+    'automod.js', 'welcome.js', 'deescalation.js', 'phrases.js', 'botName.js',
+    'commands/ban.js', 'commands/kick.js', 'commands/timeout.js', 'commands/warn.js',
+    'commands/purge.js', 'commands/slowmode.js', 'commands/lock.js',
+    'commands/giverole.js', 'commands/createchannel.js', 'commands/ping.js',
+    'commands/serverinfo.js', 'commands/userinfo.js', 'commands/say.js',
+  ];
+  const BILLABLE = /from '\.\.?\/?(openrouter|tts)\.js'|transcribePcm/;
+  for (const name of FREE) {
+    const file = path.join(HERE, '../src', name);
+    let source;
+    try {
+      source = readFileSync(file, 'utf8');
+    } catch {
+      continue; // command set moves around; only check what is there
+    }
+    assert.equal(
+      BILLABLE.test(source), false,
+      `${name} reaches a billable provider — it would stop working at zero balance`,
+    );
+  }
+});
+
 /* ── The out-of-credits notice ──────────────────────────────────────────── */
 
 test('the out-of-credits notice is once an hour per guild', () => {
