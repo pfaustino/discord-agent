@@ -17,7 +17,7 @@
 // nothing to configure. (1) exists for servers that want to call it something
 // else without renaming the application globally.
 import * as db from './db.js';
-import { normalizePhrase } from './phrases.js';
+import { normalizePhrase, expandPhraseTemplates } from './phrases.js';
 import {
   VOICE_WAKE_WORDS, VOICE_CANCEL_WORDS,
   VOICE_STOP_SPEAKING_WORDS, VOICE_STOP_LISTENING_WORDS,
@@ -87,13 +87,14 @@ const ENV_DEFAULTS = {
  * would silently rewrite wake words an admin deliberately chose.
  */
 export function voicePhrases(client, guildId, key) {
-  if (db.hasSetting(guildId, key)) return db.getSetting(guildId, key);
-  if (VOICE_PHRASES_FROM_ENV[key]) return ENV_DEFAULTS[key];
-
-  const derive = DERIVE[key];
-  const name = botNameForPhrases(client, guildId);
-  // A name that normalizes away entirely (all emoji, say) would derive
-  // nonsense like "hey " — keep the shipped default rather than break voice.
-  if (!derive || !name) return ENV_DEFAULTS[key];
-  return derive(name);
+  let list;
+  if (db.hasSetting(guildId, key)) list = db.getSetting(guildId, key);
+  else if (VOICE_PHRASES_FROM_ENV[key]) list = ENV_DEFAULTS[key];
+  else {
+    const derive = DERIVE[key];
+    const name = botNameForPhrases(client, guildId);
+    if (!derive || !name) list = ENV_DEFAULTS[key];
+    else list = derive(name);
+  }
+  return expandPhraseTemplates(list, botNameForPhrases(client, guildId));
 }

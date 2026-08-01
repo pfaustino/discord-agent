@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   normalizePhrase, parsePhraseList, formatPhraseList, PHRASE_LIST_KEYS,
+  expandPhraseTemplates,
 } from '../src/phrases.js';
 import { matchesAny } from '../src/voice.js';
 
@@ -113,4 +114,12 @@ test('all four voice lists are treated as phrase lists', () => {
     'voice_stop_speaking_words',
     'voice_wake_words',
   ]);
+});
+
+test('{ai} placeholder is preserved when parsing and expands to the bot name', () => {
+  assert.deepEqual(parsePhraseList('[hey {ai}] [{ai}, you around?]'), ['hey {ai}', '{ai} you around']);
+  assert.deepEqual(expandPhraseTemplates(['hey {ai}', '{ai} you around'], 'Helena'), [
+    'hey helena', 'helena you around',
+  ]);
+  assert.equal(matchesAny('Hey Helena, you around?', expandPhraseTemplates(['{ai} you around'], 'Helena')), true);
 });
