@@ -867,6 +867,30 @@ async function renderSettings() {
         <span class="muted">The bot always replies when @mentioned, in any channel.</span></label>
     </div>
 
+    <div class="section-title">Image &amp; video generation</div>
+    <div class="card">
+      <label class="toggle"><input type="checkbox" id="s-media_enabled"
+        ${settings.media_enabled ? "checked" : ""}> Let the bot generate images and video</label>
+      <label class="field"><span class="lbl">Who can ask for one</span>
+        <select id="s-media_access">
+          <option value="owner" ${settings.media_access !== "everyone" ? "selected" : ""}>Owner only</option>
+          <option value="everyone" ${settings.media_access === "everyone" ? "selected" : ""}>Everyone in this server</option>
+        </select></label>
+      <label class="field"><span class="lbl">Image model</span>
+        <input id="s-media_image_model" value="${esc(settings.media_image_model || "")}"
+          placeholder="google/gemini-2.5-flash-image"></label>
+      <label class="field"><span class="lbl">Video model</span>
+        <input id="s-media_video_model" value="${esc(settings.media_video_model || "")}"
+          placeholder="google/veo-3.1"></label>
+      <label class="field"><span class="lbl">Videos per hour, server-wide (0 = no cap)</span>
+        <input id="s-media_video_hourly_cap" type="number" min="0" value="${settings.media_video_hourly_cap ?? 5}"></label>
+      <span class="muted">Every image and every clip is billed against this instance's
+        OpenRouter credit, and video costs far more than images — roughly ten times per
+        request. Leave the models blank to follow whatever this instance is configured
+        to use. Opening this to <strong>everyone</strong> hands the whole server a button
+        that spends real money, so the hourly video cap is the safety net.</span>
+    </div>
+
     <div class="section-title">Voice — how it knows you're talking to it</div>
     <div class="card">
       <label class="field"><span class="lbl">Detection</span>
@@ -997,6 +1021,11 @@ async function renderSettings() {
       ai_enabled: $("#s-ai_enabled").checked,
       ai_model: $("#s-ai_model").value.trim(),
       ai_utility_model: $("#s-ai_utility_model").value.trim(),
+      media_enabled: $("#s-media_enabled").checked,
+      media_access: $("#s-media_access").value,
+      media_image_model: $("#s-media_image_model").value.trim(),
+      media_video_model: $("#s-media_video_model").value.trim(),
+      media_video_hourly_cap: parseInt($("#s-media_video_hourly_cap").value, 10) || 0,
       pressure_enabled: $("#s-pressure_enabled").checked,
       deesc_enabled: $("#s-deesc_enabled").checked,
       deesc_harsh_language: $("#s-deesc_harsh_language").checked,

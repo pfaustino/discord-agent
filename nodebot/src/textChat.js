@@ -7,6 +7,7 @@ import { recordTurn, formatForPrompt } from './conversation.js';
 import { TOOL_SCHEMAS, runTool } from './tools.js';
 import { KB_TOOL_SCHEMAS, runTool as runKbTool } from './knowledge.js';
 import * as agentTools from './agentTools.js';
+import * as mediaTools from './mediaTools.js';
 import * as documents from './documents.js';
 import * as github from './github.js';
 import * as introspect from './introspect.js';
@@ -88,6 +89,9 @@ function toolHandler(client, message, owner) {
     if (name.startsWith('repo_')) return runRepoTool(name, args);
     if (name.startsWith('kb_')) return runKbTool(message.guild.id, name, args);
     if (owner && name in agentTools.TOOLS) return agentTools.execute(client, message, name, args);
+    // Not gated on owner: a guild can open generation up to everyone, and
+    // mediaTools.execute re-checks that itself rather than trusting us.
+    if (name in mediaTools.TOOLS) return mediaTools.execute(client, message, name, args);
     return runTool(name, args);
   };
 }
@@ -134,6 +138,18 @@ export async function handleMessage(client, message) {
   } catch (err) {
     console.warn('[documents] attachment context failed:', err?.message || err);
   }
+  // Images go to the model as multimodal parts rather than as text. Same
+  // degrade-to-nothing handling as the attachment context above: a picture
+  // that won't decode shouldn't cost you the reply.
+  let imageParts = [];
+  let imageNotes = [];
+  try {
+    const images = await documents.buildImageParts(message);
+    imageParts = images.parts;
+    imageNotes = images.notes;
+  } catch (err) {
+    console.warn('[documents] image parts failed:', err?.message || err);
+  }
   // Repo links in the message are looked up automatically, same as the
   // Python bot's auto-attach — cached, so repeated mentions of one repo in a
   // conversation don't burn through the API rate limit.
@@ -149,23 +165,40 @@ export async function handleMessage(client, message) {
   // The speaker's own profile card comes first, then guild-wide durable and
   // working memory — so who you're talking to isn't buried in the dump.
   const memoryBlock = memory.getContext(guildId, message.author.id);
+  // Whether this speaker may generate images/video — the prompt has to know
+  // so he doesn't offer a picture he isn't allowed to draw.
+  const canGenerate = await mediaTools.allowed(message);
   const systemPrompt = buildSystemPrompt({
-    client, guild: message.guild, owner, memory: memoryBlock,
+    client, guild: message.guild, owner, memory: memoryBlock, media: canGenerate,
   });
   const model = db.getSetting(guildId, 'ai_model');
   const baseTools = [
     ...TOOL_SCHEMAS, ...KB_TOOL_SCHEMAS, memory.RECALL_TOOL_SCHEMA,
     ...github.GITHUB_TOOL_SCHEMAS, ...REPO_TOOL_SCHEMAS,
   ];
-  const tools = owner ? [...baseTools, ...agentTools.TOOL_SCHEMAS] : baseTools;
+  // Media schemas hang off canGenerate, not owner — generation can be opened
+  // to a whole guild, so the two permissions stack independently.
+  const tools = [
+    ...baseTools,
+    ...(owner ? agentTools.TOOL_SCHEMAS : []),
+    ...(canGenerate ? mediaTools.TOOL_SCHEMAS : []),
+  ];
+  // Notes ride along as text even when a file was skipped, so he can say
+  // "that HEIC didn't come through" instead of ignoring it silently.
+  const userText = `${message.author.username}: ${content || '(no text)'}`
+    + (attachmentContext ? `\n\n${attachmentContext}` : '')
+    + (repoContext ? `\n\n${repoContext}` : '')
+    + (imageNotes.length ? `\n\n${imageNotes.join('\n')}` : '');
   try {
     const reply = await chat([
       { role: 'system', content: `${systemPrompt}\n\nRecent conversation:\n${transcript}` },
       {
         role: 'user',
-        content: `${message.author.username}: ${content || '(no text)'}`
-          + (attachmentContext ? `\n\n${attachmentContext}` : '')
-          + (repoContext ? `\n\n${repoContext}` : ''),
+        // Plain string unless there are actually images — the multimodal array
+        // form is only worth the trouble when something needs to be seen.
+        content: imageParts.length
+          ? [{ type: 'text', text: userText }, ...imageParts]
+          : userText,
       },
     ], {
       model, tools,

@@ -168,6 +168,23 @@ export const DEFAULTS = {
   deesc_harsh_language: false,
   // background/utility model override; null falls back to the env default
   ai_utility_model: null,
+  // Image and video generation. Unlike everything else here, each use spends
+  // real money per generation, so access starts at the narrowest setting that
+  // is still useful: 'owner' means only OWNER_ID can ask for one, 'everyone'
+  // opens it to the whole server. Video is roughly ten times the cost of an
+  // image, so handing a busy server an unmetered button is a decision someone
+  // should make on purpose rather than inherit from a default.
+  media_enabled: true,
+  media_access: 'owner',
+  // Per-guild model pins. null means "use whatever OPENROUTER_IMAGE_MODEL /
+  // OPENROUTER_VIDEO_MODEL is set to" — mediaTools.js resolves the fallback at
+  // call time, deliberately not read here, so changing the env var moves every
+  // guild that hasn't chosen its own model.
+  media_image_model: null,
+  media_video_model: null,
+  // Spend breaker for the expensive half: videos per guild per hour, 0 to
+  // disable the cap entirely. Images are cheap enough to leave uncapped.
+  media_video_hourly_cap: 5,
   // voice monitoring master switch (dashboard start/stop)
   voice_enabled: false,
   // Dashboard access, mapped to this server's own Discord roles. Anyone in a

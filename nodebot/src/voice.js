@@ -29,6 +29,7 @@ import * as tts from './tts.js';
 import { TOOL_SCHEMAS, runTool } from './tools.js';
 import { KB_TOOL_SCHEMAS, runTool as runKbTool } from './knowledge.js';
 import * as agentTools from './agentTools.js';
+import * as mediaTools from './mediaTools.js';
 import * as github from './github.js';
 import * as memory from './memory.js';
 import { REPO_TOOL_SCHEMAS, runRepoTool } from './textChat.js';
@@ -531,36 +532,50 @@ async function respond(channel, speakerName, speakerId, state, { followUp = fals
   // same one text chat gets: the speaker's profile card first, then
   // guild-wide durable/working memory.
   const memoryBlock = memory.getContext(guild.id, speakerId);
+
+  // message.author on a real discord.js Message is a User, not a
+  // GuildMember — match that shape so agentTools' actor()/checks behave
+  // the same here as they do from text chat. Built before the prompt
+  // rather than after it because mediaTools.allowed() needs a message to
+  // resolve per-guild generation access, and that answer has to be known
+  // while the system prompt is still being assembled.
+  const fakeMessage = {
+    guild, channel,
+    author: guild.members.cache.get(speakerId)?.user
+      || { id: speakerId, tag: speakerName, username: speakerName },
+  };
+  const canGenerate = await mediaTools.allowed(fakeMessage);
   let systemPrompt = buildSystemPrompt({
-    client: channel.client, guild, owner, memory: memoryBlock,
+    client: channel.client, guild, owner, memory: memoryBlock, media: canGenerate,
   }) + VOICE_PROMPT({
     channel: channel.name, speaker: speakerName, followUp, mention,
   });
   if (owner) systemPrompt += VOICE_OWNER_ACTION_NOTE;
   const transcript = formatForPrompt(guild.id, CONTEXT_TURNS);
 
-  // message.author on a real discord.js Message is a User, not a
-  // GuildMember — match that shape so agentTools' actor()/checks behave
-  // the same here as they do from text chat.
-  const fakeMessage = {
-    guild, channel,
-    author: guild.members.cache.get(speakerId)?.user
-      || { id: speakerId, tag: speakerName, username: speakerName },
-  };
   const baseTools = [
     ...TOOL_SCHEMAS, ...KB_TOOL_SCHEMAS, memory.RECALL_TOOL_SCHEMA,
     ...github.GITHUB_TOOL_SCHEMAS, ...REPO_TOOL_SCHEMAS,
   ];
-  const tools = owner ? [...baseTools, ...agentTools.TOOL_SCHEMAS] : baseTools;
+  // Generation is not an owner privilege the way moderation is — a guild can
+  // open it to everyone — so the media schemas ride on canGenerate alone.
+  const tools = [
+    ...baseTools,
+    ...(owner ? agentTools.TOOL_SCHEMAS : []),
+    ...(canGenerate ? mediaTools.TOOL_SCHEMAS : []),
+  ];
   const toolHandler = async (name, args) => {
     if (name === 'recall_chat_log') return memory.recall(guild.id, args);
     if (name.startsWith('github_')) return github.runGithubTool(name, args);
     if (name.startsWith('repo_')) return runRepoTool(name, args);
     if (name.startsWith('kb_')) return runKbTool(guild.id, name, args);
     if (owner && name in agentTools.TOOLS) return agentTools.execute(null, fakeMessage, name, args);
+    // No owner check: mediaTools.execute re-checks access itself, so gating
+    // here would only duplicate it — and get it wrong for open guilds.
+    if (name in mediaTools.TOOLS) return mediaTools.execute(null, fakeMessage, name, args);
     return runTool(name, args);
   };
-  const onToolCalls = owner ? async (toolCalls) => {
+  const onToolCalls = (owner || canGenerate) ? async (toolCalls) => {
     const blurb = describeToolCalls(toolCalls);
     recordTurn(guild.id, { source: 'voice', channel: channel.name, speaker: self, text: blurb });
     try {
