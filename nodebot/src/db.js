@@ -165,6 +165,11 @@ export const DEFAULTS = {
   voice_cue_thinking: { mode: 'tone' },
   voice_cue_engaging: { mode: 'tone' },
   voice_cue_declined: { mode: 'off' },
+  // Per-server spoken-voice overrides. null = use deployment env (FISH_* /
+  // EDGE_TTS_VOICE on Railway). The API key itself stays env-only.
+  fish_voice_id: null,
+  fish_tts_model: null,
+  edge_tts_voice: null,
   quiet_mode: false,
   log_channel: null,
   // welcome / goodbye / autorole

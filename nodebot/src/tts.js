@@ -1,8 +1,9 @@
 // TTS synthesis — port of tts.py. Fish Audio when FISH_API_KEY is set, with
 // msedge-tts (free, unofficial Edge Read Aloud API) as the fallback.
 import { MsEdgeTTS, OUTPUT_FORMAT } from 'msedge-tts';
-import { EDGE_TTS_VOICE, FISH_API_KEY, FISH_TTS_MODEL, FISH_VOICE_ID } from './config.js';
+import { FISH_API_KEY, FISH_TTS_MODEL } from './config.js';
 import * as credits from './credits/index.js';
+import { ttsConfigForGuild } from './ttsConfig.js';
 
 const FISH_URL = 'https://api.fish.audio/v1/tts';
 
@@ -34,8 +35,9 @@ export function fishEnabled() {
   return Boolean(FISH_API_KEY);
 }
 
-export function isS2() {
-  return FISH_TTS_MODEL.toLowerCase().startsWith('s2');
+export function isS2(guildId = null) {
+  const model = guildId != null ? ttsConfigForGuild(guildId).fishModel : FISH_TTS_MODEL;
+  return model.toLowerCase().startsWith('s2');
 }
 
 export function stripVoiceTags(text) {
@@ -159,15 +161,16 @@ export function mp3DurationSec(buf) {
  * mid-conversation for the sake of a few credits.
  */
 export async function synthesize(text, { guildId = null } = {}) {
+  const cfg = ttsConfigForGuild(guildId);
   if (fishEnabled()) {
-    const audio = await synthesizeWith(text, FISH_CHUNK, fish, 'Fish');
+    const audio = await synthesizeWith(text, FISH_CHUNK, (chunk) => fish(chunk, cfg), 'Fish');
     if (audio) {
       const seconds = mp3DurationSec(audio);
       if (seconds > 0) {
         credits.meter(credits.contextFor(guildId), {
           kind: 'tts-fish',
           quantity: seconds / 60,
-          meta: { model: FISH_TTS_MODEL, seconds: Math.round(seconds * 10) / 10 },
+          meta: { model: cfg.fishModel, seconds: Math.round(seconds * 10) / 10 },
         });
       } else {
         console.warn('[tts] could not read a duration from the Fish audio — not billing it');
@@ -175,12 +178,12 @@ export async function synthesize(text, { guildId = null } = {}) {
       return audio;
     }
   }
-  return synthesizeWith(stripVoiceTags(text), EDGE_CHUNK, edge, 'edge');
+  return synthesizeWith(stripVoiceTags(text), EDGE_CHUNK, (chunk) => edge(chunk, cfg), 'edge');
 }
 
-async function fish(text) {
+async function fish(text, cfg) {
   const payload = { text, format: 'mp3', latency: 'normal' };
-  if (FISH_VOICE_ID) payload.reference_id = FISH_VOICE_ID;
+  if (cfg.fishVoiceId) payload.reference_id = cfg.fishVoiceId;
   let resp;
   try {
     resp = await fetch(FISH_URL, {
@@ -188,7 +191,7 @@ async function fish(text) {
       headers: {
         Authorization: `Bearer ${FISH_API_KEY}`,
         'Content-Type': 'application/json',
-        model: FISH_TTS_MODEL,
+        model: cfg.fishModel,
       },
       body: JSON.stringify(payload),
     });
@@ -204,10 +207,10 @@ async function fish(text) {
   return buf.length ? buf : null;
 }
 
-async function edge(text) {
+async function edge(text, cfg) {
   try {
     const tts = new MsEdgeTTS();
-    await tts.setMetadata(EDGE_TTS_VOICE, OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
+    await tts.setMetadata(cfg.edgeVoice, OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
     const { audioStream } = tts.toStream(text);
     const chunks = [];
     for await (const chunk of audioStream) chunks.push(chunk);

@@ -242,6 +242,40 @@ test('clearing the bot name field reverts to the Discord name', () => withServer
   assert.equal(settings.bot_name_effective, 'Max');
 }));
 
+test('per-server TTS overrides round-trip and expose effective values', () => withServer(async (call) => {
+  const res = await call('PUT', '/api/guilds/111/settings', {
+    cookie: authCookie(),
+    body: {
+      fish_voice_id: 'voice-abc',
+      fish_tts_model: 's2.1-pro',
+      edge_tts_voice: 'en-US-AriaNeural',
+    },
+  });
+  assert.equal(res.status, 200);
+  const settings = await (await call('GET', '/api/guilds/111/settings', { cookie: authCookie() })).json();
+  assert.equal(settings.fish_voice_id, 'voice-abc');
+  assert.equal(settings.fish_tts_model, 's2.1-pro');
+  assert.equal(settings.edge_tts_voice, 'en-US-AriaNeural');
+  assert.equal(settings.fish_voice_id_source, 'override');
+  assert.equal(settings.fish_tts_model_effective, 's2.1-pro');
+  assert.equal(settings.edge_tts_voice_effective, 'en-US-AriaNeural');
+  assert.equal(typeof settings.fish_api_configured, 'boolean');
+}));
+
+test('clearing TTS overrides stores null and falls back to env', () => withServer(async (call) => {
+  await call('PUT', '/api/guilds/111/settings', {
+    cookie: authCookie(),
+    body: { fish_voice_id: 'temp' },
+  });
+  await call('PUT', '/api/guilds/111/settings', {
+    cookie: authCookie(),
+    body: { fish_voice_id: '  ' },
+  });
+  const settings = await (await call('GET', '/api/guilds/111/settings', { cookie: authCookie() })).json();
+  assert.equal(settings.fish_voice_id, null);
+  assert.equal(settings.fish_voice_id_source, 'env');
+}));
+
 test('the read-only name fields can be sent back without a 400', () => withServer(async (call) => {
   const res = await call('PUT', '/api/guilds/111/settings', {
     cookie: authCookie(),

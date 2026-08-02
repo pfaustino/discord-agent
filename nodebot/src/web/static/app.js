@@ -772,6 +772,18 @@ async function renderMod() {
 
 /* ---------- settings ---------- */
 
+const SETTINGS_TAB_KEY = "settingsTab";
+
+function showSettingsPanel(id) {
+  sessionStorage.setItem(SETTINGS_TAB_KEY, id);
+  document.querySelectorAll(".settings-panel").forEach((panel) => {
+    panel.classList.toggle("active", panel.dataset.panel === id);
+  });
+  document.querySelectorAll("[data-settings-tab]").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.settingsTab === id);
+  });
+}
+
 async function renderSettings() {
   const [settings, channels, roles, me, sounds] = await Promise.all([
     api(`/guilds/${state.guildId}/settings`),
@@ -782,9 +794,6 @@ async function renderSettings() {
     // permission to read it, still gets a working settings page.
     api(`/guilds/${state.guildId}/soundboard`).catch(() => []),
   ]);
-  // Lowercased bot name for the example phrases below — the matcher lowercases
-  // everything anyway, so the examples should look the way a saved phrase does.
-  const lower = botLabel(settings).toLowerCase();
   const textChannels = channels.filter((c) => c.type === "text");
   // Bot/integration-managed roles can't be handed out to people, so they're
   // no use as a dashboard-access group.
@@ -796,177 +805,245 @@ async function renderSettings() {
     `<option value="">— none —</option>` + roles.filter((r) => !r.managed).map((r) =>
       `<option value="${r.id}" ${String(selected) === r.id ? "selected" : ""}>${esc(r.name)}</option>`).join("");
 
+  const settingsTabs = [
+    { id: "identity", label: "Identity" },
+    { id: "welcome", label: "Welcome" },
+    { id: "automod", label: "Automod" },
+    { id: "access", label: "Dashboard access" },
+    { id: "ai", label: "AI" },
+    { id: "voice-detect", label: "Voice detection" },
+    { id: "voice-cues", label: "Voice cues" },
+    { id: "voice-phrases", label: "Wake & stop words" },
+    { id: "speech", label: "Speech (TTS)" },
+    { id: "proactive", label: "Proactive" },
+    { id: "deescalation", label: "De-escalation" },
+    { id: "memory", label: "Memory" },
+    { id: "logging", label: "Logging" },
+    { id: "presence", label: "Presence" },
+  ];
+  const activeTab = sessionStorage.getItem(SETTINGS_TAB_KEY) || "identity";
+
+  const fishKeyBadge = settings.fish_api_configured
+    ? '<span class="badge ok">Fish API key on server</span>'
+    : '<span class="badge warn">No Fish API key — Edge TTS only</span>';
+
   content().innerHTML = `
-    <div class="section-title">Identity</div>
-    <div class="card">
-      <label class="field"><span class="lbl">Bot name</span>
-        <input id="s-bot_name" value="${esc(settings.bot_name || "")}"
-          placeholder="${esc(me.name)} (from Discord)"></label>
-      <span class="muted">Leave this blank and the bot uses its Discord application
-        name — rename it in the Discord developer portal and everything here follows
-        on the next restart, with nothing to change. Fill it in only to call it
-        something different in this server. The name is used in its prompts, in what
-        it remembers, and in the voice phrases below.
-        ${settings.bot_name_source === "override"
-          ? `Currently overridden to <strong>${esc(settings.bot_name_effective)}</strong> — clear the box to go back to ${esc(me.name)}.`
-          : `Currently <strong>${esc(settings.bot_name_effective)}</strong>, from Discord.`}</span>
-    </div>
+    <div class="settings-layout">
+      <nav class="settings-nav" aria-label="Settings sections">
+        ${settingsTabs.map((t) =>
+          `<button type="button" data-settings-tab="${t.id}" class="${t.id === activeTab ? "active" : ""}">${esc(t.label)}</button>`).join("")}
+      </nav>
+      <div class="settings-main">
+        <section class="settings-panel ${activeTab === "identity" ? "active" : ""}" data-panel="identity">
+          <div class="section-title">Identity</div>
+          <div class="card">
+            <label class="field"><span class="lbl">Bot name</span>
+              <input id="s-bot_name" value="${esc(settings.bot_name || "")}"
+                placeholder="${esc(me.name)} (from Discord)"></label>
+            <span class="muted">Leave blank to use the Discord application name.
+              Fill in only to call it something different in this server.
+              ${settings.bot_name_source === "override"
+                ? `Currently <strong>${esc(settings.bot_name_effective)}</strong> — clear to use ${esc(me.name)}.`
+                : `Currently <strong>${esc(settings.bot_name_effective)}</strong>, from Discord.`}</span>
+          </div>
+        </section>
 
-    <div class="section-title">Welcome &amp; autorole</div>
-    <div class="card">
-      <label class="field"><span class="lbl">Welcome channel</span>
-        <select id="s-welcome_channel">${channelOptions(settings.welcome_channel)}</select></label>
-      <label class="field"><span class="lbl">Welcome message ({user}, {server}, {membercount})</span>
-        <textarea id="s-welcome_message">${esc(settings.welcome_message)}</textarea></label>
-      <label class="field"><span class="lbl">Goodbye message</span>
-        <textarea id="s-goodbye_message">${esc(settings.goodbye_message)}</textarea></label>
-      <label class="field"><span class="lbl">Autorole (given to new members)</span>
-        <select id="s-autorole">${roleOptions(settings.autorole)}</select></label>
-    </div>
+        <section class="settings-panel ${activeTab === "welcome" ? "active" : ""}" data-panel="welcome">
+          <div class="section-title">Welcome &amp; autorole</div>
+          <div class="card">
+            <label class="field"><span class="lbl">Welcome channel</span>
+              <select id="s-welcome_channel">${channelOptions(settings.welcome_channel)}</select></label>
+            <label class="field"><span class="lbl">Welcome message ({user}, {server}, {membercount})</span>
+              <textarea id="s-welcome_message">${esc(settings.welcome_message)}</textarea></label>
+            <label class="field"><span class="lbl">Goodbye message</span>
+              <textarea id="s-goodbye_message">${esc(settings.goodbye_message)}</textarea></label>
+            <label class="field"><span class="lbl">Autorole (given to new members)</span>
+              <select id="s-autorole">${roleOptions(settings.autorole)}</select></label>
+          </div>
+        </section>
 
-    <div class="section-title">Auto-moderation</div>
-    <div class="card">
-      <label class="toggle"><input type="checkbox" id="s-automod_enabled"
-        ${settings.automod_enabled ? "checked" : ""}> Enable automod</label>
-      <label class="toggle"><input type="checkbox" id="s-block_invites"
-        ${settings.block_invites ? "checked" : ""}> Block Discord invite links</label>
-      <label class="field"><span class="lbl">Banned words (comma-separated)</span>
-        <input id="s-banned_words" value="${esc((settings.banned_words || []).join(", "))}"></label>
-      <label class="field"><span class="lbl">Max mentions per message (0 = off)</span>
-        <input id="s-max_mentions" type="number" min="0" value="${settings.max_mentions || 0}"></label>
-    </div>
+        <section class="settings-panel ${activeTab === "automod" ? "active" : ""}" data-panel="automod">
+          <div class="section-title">Auto-moderation</div>
+          <div class="card">
+            <label class="toggle"><input type="checkbox" id="s-automod_enabled"
+              ${settings.automod_enabled ? "checked" : ""}> Enable automod</label>
+            <label class="toggle"><input type="checkbox" id="s-block_invites"
+              ${settings.block_invites ? "checked" : ""}> Block Discord invite links</label>
+            <label class="field"><span class="lbl">Banned words (comma-separated)</span>
+              <input id="s-banned_words" value="${esc((settings.banned_words || []).join(", "))}"></label>
+            <label class="field"><span class="lbl">Max mentions per message (0 = off)</span>
+              <input id="s-max_mentions" type="number" min="0" value="${settings.max_mentions || 0}"></label>
+          </div>
+        </section>
 
-    <div class="section-title">Dashboard access</div>
-    <div class="card">
-      <label class="field"><span class="lbl">Roles with admin access (everything except this page's owner-only bits)</span>
-        <select id="s-dashboard_admin_roles" multiple size="5">${allRoles.map((r) =>
-          `<option value="${r.id}" ${(settings.dashboard_admin_roles || []).map(String).includes(r.id) ? "selected" : ""}>${esc(r.name)}</option>`).join("")}</select></label>
-      <label class="field"><span class="lbl">Roles with moderator access (members, warnings, mod log)</span>
-        <select id="s-dashboard_mod_roles" multiple size="5">${allRoles.map((r) =>
-          `<option value="${r.id}" ${(settings.dashboard_mod_roles || []).map(String).includes(r.id) ? "selected" : ""}>${esc(r.name)}</option>`).join("")}</select></label>
-      <span class="muted">People sign in with Discord and get the level their roles here give them —
-        no separate account list to keep in step. Admins can manage the AI (persona, models,
-        voice, automod); moderators can act on members but not reconfigure the bot.
-        Leave both empty and it falls back to Discord's own permissions: Manage Server
-        counts as admin, kick/ban/timeout as moderator. Whoever owns this instance
-        (OWNER_ID) is always full access and cannot be locked out.</span>
-    </div>
+        <section class="settings-panel ${activeTab === "access" ? "active" : ""}" data-panel="access">
+          <div class="section-title">Dashboard access</div>
+          <div class="card">
+            <label class="field"><span class="lbl">Roles with admin access</span>
+              <select id="s-dashboard_admin_roles" multiple size="5">${allRoles.map((r) =>
+                `<option value="${r.id}" ${(settings.dashboard_admin_roles || []).map(String).includes(r.id) ? "selected" : ""}>${esc(r.name)}</option>`).join("")}</select></label>
+            <label class="field"><span class="lbl">Roles with moderator access</span>
+              <select id="s-dashboard_mod_roles" multiple size="5">${allRoles.map((r) =>
+                `<option value="${r.id}" ${(settings.dashboard_mod_roles || []).map(String).includes(r.id) ? "selected" : ""}>${esc(r.name)}</option>`).join("")}</select></label>
+            <span class="muted">Admins manage AI, voice, and automod; moderators handle members.
+              Empty lists fall back to Discord permissions. OWNER_ID is always full access.</span>
+          </div>
+        </section>
 
-    <div class="section-title">AI (OpenRouter)</div>
-    <div class="card">
-      <label class="toggle"><input type="checkbox" id="s-ai_enabled"
-        ${settings.ai_enabled ? "checked" : ""}> Enable AI replies</label>
-      <label class="field"><span class="lbl">Model (${esc(botLabel(settings))}'s voice — replies, wake, interjections)</span>
-        <input id="s-ai_model" value="${esc(settings.ai_model)}" placeholder="openrouter/free"></label>
-      <label class="field"><span class="lbl">Utility model (background: classification, memory, assessments)</span>
-        <input id="s-ai_utility_model" value="${esc(settings.ai_utility_model)}" placeholder="openrouter/free"></label>
-      <p class="muted" style="margin-bottom:12px">Character &amp; capability persona are edited on the Overview tab.</p>
-      <label class="field"><span class="lbl">Always-on AI channels (replies to every message)</span>
-        <select id="s-ai_channels" multiple size="5">${textChannels.map((c) =>
-          `<option value="${c.id}" ${(settings.ai_channels || []).map(String).includes(c.id) ? "selected" : ""}>#${esc(c.name)}</option>`).join("")}</select>
-        <span class="muted">The bot always replies when @mentioned, in any channel.</span></label>
-    </div>
+        <section class="settings-panel ${activeTab === "ai" ? "active" : ""}" data-panel="ai">
+          <div class="section-title">AI (OpenRouter)</div>
+          <div class="card">
+            <label class="toggle"><input type="checkbox" id="s-ai_enabled"
+              ${settings.ai_enabled ? "checked" : ""}> Enable AI replies</label>
+            <label class="field"><span class="lbl">Model (${esc(botLabel(settings))}'s voice)</span>
+              <input id="s-ai_model" value="${esc(settings.ai_model)}" placeholder="openrouter/free"></label>
+            <label class="field"><span class="lbl">Utility model (background work)</span>
+              <input id="s-ai_utility_model" value="${esc(settings.ai_utility_model)}" placeholder="openrouter/free"></label>
+            <p class="muted" style="margin-bottom:12px">Character &amp; capability persona are on the Overview tab.</p>
+            <label class="field"><span class="lbl">Always-on AI channels</span>
+              <select id="s-ai_channels" multiple size="5">${textChannels.map((c) =>
+                `<option value="${c.id}" ${(settings.ai_channels || []).map(String).includes(c.id) ? "selected" : ""}>#${esc(c.name)}</option>`).join("")}</select>
+              <span class="muted">The bot always replies when @mentioned, in any channel.</span></label>
+          </div>
+        </section>
 
-    <div class="section-title">Voice — how it knows you're talking to it</div>
-    <div class="card">
-      <label class="field"><span class="lbl">Detection</span>
-        <select id="s-voice_detection_mode">
-          <option value="smart" ${settings.voice_detection_mode !== "wake_words" ? "selected" : ""}>Smart detection (recommended)</option>
-          <option value="wake_words" ${settings.voice_detection_mode === "wake_words" ? "selected" : ""}>Exact wake words only</option>
-        </select></label>
-      <span class="muted">Smart detection runs a cheap classifier over what was said
-        to spot ${esc(botLabel(settings))}'s name even when the transcriber mangles it
-        ("hey aim ee"), then lets the main model read the conversation and work out
-        whether it was being <em>spoken to</em> or just <em>spoken about</em> — so
-        "I asked ${esc(botLabel(settings))} earlier" doesn't make it butt in. The
-        wake words below still trigger instantly in either mode. The classifier uses
-        the utility model, the same cheap one memory and de-escalation use.</span>
-    </div>
+        <section class="settings-panel ${activeTab === "voice-detect" ? "active" : ""}" data-panel="voice-detect">
+          <div class="section-title">Voice detection</div>
+          <div class="card">
+            <label class="field"><span class="lbl">Detection mode</span>
+              <select id="s-voice_detection_mode">
+                <option value="smart" ${settings.voice_detection_mode !== "wake_words" ? "selected" : ""}>Smart detection (recommended)</option>
+                <option value="wake_words" ${settings.voice_detection_mode === "wake_words" ? "selected" : ""}>Exact wake words only</option>
+              </select></label>
+            <span class="muted">Smart detection spots ${esc(botLabel(settings))}'s name even when
+              transcription mangles it, then decides if it was addressed vs mentioned.
+              Wake words below still trigger instantly in either mode.</span>
+          </div>
+        </section>
 
-    <div class="section-title">Voice — cues</div>
-    <div class="card">
-      ${cueField("thinking", "Heard its name, deciding", settings, sounds)}
-      ${cueField("engaging", "About to answer", settings, sounds)}
-      ${cueField("declined", "Decided it wasn't being addressed", settings, sounds)}
-      <span class="muted">Smart detection takes a moment and can legitimately end in
-        silence, which is otherwise indistinguishable from not having heard you.
-        These play a short tone — or a sound from this server's own Discord
-        soundboard — so the room knows what's happening. Soundboard playback needs
-        the bot to have <strong>Use Soundboard</strong> and <strong>Speak</strong>
-        here; if a sound fails it falls back to the tone rather than going silent.
-        ${sounds.length ? "" : "<em>No soundboard sounds found in this server.</em>"}</span>
-    </div>
+        <section class="settings-panel ${activeTab === "voice-cues" ? "active" : ""}" data-panel="voice-cues">
+          <div class="section-title">Voice cues</div>
+          <div class="card">
+            ${cueField("thinking", "Heard its name, deciding", settings, sounds)}
+            ${cueField("engaging", "About to answer", settings, sounds)}
+            ${cueField("declined", "Decided it wasn't being addressed", settings, sounds)}
+            <span class="muted">Short tones or soundboard sounds while smart detection runs.
+              ${sounds.length ? "" : "<em>No soundboard sounds found in this server.</em>"}</span>
+          </div>
+        </section>
 
-    <div class="section-title">Voice</div>
-    <div class="card">
-      <label class="field"><span class="lbl">Wake words</span>
-        <input id="s-voice_wake_words" value="${esc(brackets(settings.voice_wake_words))}"
-          placeholder="[hey {ai}] [{ai}, you around?]"></label>
-      <label class="field"><span class="lbl">Cancel words (abort a pending reply)</span>
-        <input id="s-voice_cancel_words" value="${esc(brackets(settings.voice_cancel_words))}"
-          placeholder="[never mind] [forget it] [cancel that]"></label>
-      <label class="field"><span class="lbl">Stop speaking (cut him off, stay in the conversation)</span>
-        <input id="s-voice_stop_speaking_words" value="${esc(brackets(settings.voice_stop_speaking_words))}"
-          placeholder="[{ai} stop speaking] [{ai} be quiet]"></label>
-      <label class="field"><span class="lbl">Stop listening (end the conversation)</span>
-        <input id="s-voice_stop_listening_words" value="${esc(brackets(settings.voice_stop_listening_words))}"
-          placeholder="[{ai} stop listening] [{ai} go to sleep]"></label>
-      <span class="muted">Put each phrase in its own [brackets] — that way a phrase
-        can contain a comma, like [{ai}, you around?]. Use <code>{ai}</code> as a
-        placeholder for the bot's name (Helena, etc.) so wake words follow renames.
-        Punctuation and capitals are ignored when matching.
-        Say a wake word to pull the bot into the conversation; a cancel word right
-        after calls it off before he answers. Once he's spoken he keeps listening
-        for a follow-up, until someone tells him to stop speaking or stop listening.</span>
-    </div>
+        <section class="settings-panel ${activeTab === "voice-phrases" ? "active" : ""}" data-panel="voice-phrases">
+          <div class="section-title">Wake &amp; stop words</div>
+          <div class="card">
+            <label class="field"><span class="lbl">Wake words</span>
+              <input id="s-voice_wake_words" value="${esc(brackets(settings.voice_wake_words))}"
+                placeholder="[hey {ai}] [{ai}, you around?]"></label>
+            <label class="field"><span class="lbl">Cancel words (abort a pending reply)</span>
+              <input id="s-voice_cancel_words" value="${esc(brackets(settings.voice_cancel_words))}"
+                placeholder="[never mind] [forget it] [cancel that]"></label>
+            <label class="field"><span class="lbl">Stop speaking (cut off, stay in conversation)</span>
+              <input id="s-voice_stop_speaking_words" value="${esc(brackets(settings.voice_stop_speaking_words))}"
+                placeholder="[{ai} stop speaking] [{ai} be quiet]"></label>
+            <label class="field"><span class="lbl">Stop listening (end the conversation)</span>
+              <input id="s-voice_stop_listening_words" value="${esc(brackets(settings.voice_stop_listening_words))}"
+                placeholder="[{ai} stop listening] [{ai} go to sleep]"></label>
+            <span class="muted">Use <code>{ai}</code> for the bot's name. Each phrase in [brackets].</span>
+          </div>
+        </section>
 
-    <div class="section-title">Proactive speech (pressure engine)</div>
-    <div class="card">
-      <label class="toggle"><input type="checkbox" id="s-pressure_enabled"
-        ${settings.pressure_enabled ? "checked" : ""}> Let the bot speak up unprompted
-        when pressure builds (blockers, wrong claims, safety)</label>
-    </div>
+        <section class="settings-panel ${activeTab === "speech" ? "active" : ""}" data-panel="speech">
+          <div class="section-title">Speech (TTS)</div>
+          <div class="card">
+            <p style="margin-bottom:12px">${fishKeyBadge}</p>
+            <span class="muted" style="display:block;margin-bottom:14px">Fish Audio is tried first when the server
+              has <code>FISH_API_KEY</code> in Railway; Edge TTS is the free fallback. Leave a field blank here
+              to use the deployment default. Changes apply on the next spoken reply — no redeploy.</span>
+            <label class="field"><span class="lbl">Fish voice ID (reference_id)</span>
+              <input id="s-fish_voice_id" value="${esc(settings.fish_voice_id || "")}"
+                placeholder="${esc(settings.fish_voice_id_effective || "from fish.audio voice URL")}"></label>
+            <span class="muted">Copy from a voice page on fish.audio — the hex id in the URL after <code>/m/</code>.
+              ${settings.fish_voice_id_source === "override"
+                ? `Using <strong>${esc(settings.fish_voice_id_effective || "(none)")}</strong> for this server.`
+                : settings.fish_voice_id_effective
+                  ? `Deployment default: <strong>${esc(settings.fish_voice_id_effective)}</strong>.`
+                  : "No voice id set — Fish uses its platform default."}</span>
+            <label class="field" style="margin-top:14px"><span class="lbl">Fish model</span>
+              <input id="s-fish_tts_model" value="${esc(settings.fish_tts_model || "")}"
+                placeholder="${esc(settings.fish_tts_model_effective || "s2.1-pro-free")}"></label>
+            <span class="muted">e.g. <code>s2.1-pro-free</code>, <code>s2.1-pro</code>, <code>s1</code>.
+              ${settings.fish_tts_model_source === "override"
+                ? `This server: <strong>${esc(settings.fish_tts_model_effective)}</strong>.`
+                : `Deployment default: <strong>${esc(settings.fish_tts_model_effective)}</strong>.`}</span>
+            <label class="field" style="margin-top:14px"><span class="lbl">Edge TTS voice (fallback)</span>
+              <input id="s-edge_tts_voice" value="${esc(settings.edge_tts_voice || "")}"
+                placeholder="${esc(settings.edge_tts_voice_effective || "en-US-JennyNeural")}"></label>
+            <span class="muted">Microsoft neural voice when Fish is off or fails — e.g.
+              <code>en-US-JennyNeural</code>, <code>en-US-GuyNeural</code>.
+              ${settings.edge_tts_voice_source === "override"
+                ? `This server: <strong>${esc(settings.edge_tts_voice_effective)}</strong>.`
+                : `Deployment default: <strong>${esc(settings.edge_tts_voice_effective)}</strong>.`}</span>
+          </div>
+        </section>
 
-    <div class="section-title">De-escalation</div>
-    <div class="card">
-      <label class="toggle"><input type="checkbox" id="s-deesc_enabled"
-        ${settings.deesc_enabled ? "checked" : ""}> Step in on real conflicts
-        (check-in &rarr; suggest a pause &rarr; notify mods; never punishes)</label>
-      <label class="toggle"><input type="checkbox" id="s-deesc_harsh_language"
-        ${settings.deesc_harsh_language ? "checked" : ""}> Also gently check in on
-        sustained harsh language (separate from safety; never escalates)</label>
-    </div>
+        <section class="settings-panel ${activeTab === "proactive" ? "active" : ""}" data-panel="proactive">
+          <div class="section-title">Proactive speech</div>
+          <div class="card">
+            <label class="toggle"><input type="checkbox" id="s-pressure_enabled"
+              ${settings.pressure_enabled ? "checked" : ""}> Speak up unprompted when pressure builds</label>
+          </div>
+        </section>
 
-    <div class="section-title">Memory</div>
-    <div class="card">
-      <div class="btn-row">
-        <button class="btn" id="memory-view-btn">View memory</button>
-        <button class="btn danger" id="memory-wipe-btn">Wipe memory</button>
+        <section class="settings-panel ${activeTab === "deescalation" ? "active" : ""}" data-panel="deescalation">
+          <div class="section-title">De-escalation</div>
+          <div class="card">
+            <label class="toggle"><input type="checkbox" id="s-deesc_enabled"
+              ${settings.deesc_enabled ? "checked" : ""}> Step in on real conflicts</label>
+            <label class="toggle"><input type="checkbox" id="s-deesc_harsh_language"
+              ${settings.deesc_harsh_language ? "checked" : ""}> Gently check in on sustained harsh language</label>
+          </div>
+        </section>
+
+        <section class="settings-panel ${activeTab === "memory" ? "active" : ""}" data-panel="memory">
+          <div class="section-title">Memory</div>
+          <div class="card">
+            <div class="btn-row">
+              <button class="btn" id="memory-view-btn">View memory</button>
+              <button class="btn danger" id="memory-wipe-btn">Wipe memory</button>
+            </div>
+            <span class="muted">Persistent working + durable memory from text and voice.</span>
+          </div>
+        </section>
+
+        <section class="settings-panel ${activeTab === "logging" ? "active" : ""}" data-panel="logging">
+          <div class="section-title">Logging</div>
+          <div class="card">
+            <label class="field"><span class="lbl">Mod log channel</span>
+              <select id="s-log_channel">${channelOptions(settings.log_channel)}</select></label>
+          </div>
+        </section>
+
+        <section class="settings-panel ${activeTab === "presence" ? "active" : ""}" data-panel="presence">
+          <div class="section-title">Bot presence (global)</div>
+          <div class="card">
+            <label class="field"><span class="lbl">Status</span>
+              <select id="p-status">${["online", "idle", "dnd", "invisible"].map((s) =>
+                `<option ${me.presence.status === s ? "selected" : ""}>${s}</option>`).join("")}</select></label>
+            <label class="field"><span class="lbl">Activity</span>
+              <select id="p-type">${["playing", "watching", "listening", "competing"].map((s) =>
+                `<option ${me.presence.activity_type === s ? "selected" : ""}>${s}</option>`).join("")}</select></label>
+            <label class="field"><span class="lbl">Activity text (empty = none)</span>
+              <input id="p-text" value="${esc(me.presence.text)}"></label>
+            <button class="btn full" id="save-presence">Update presence</button>
+          </div>
+        </section>
+
+        <button class="btn primary full settings-save" id="save-settings">Save server settings</button>
       </div>
-      <span class="muted">Two-tier persistent memory (working + durable), built from
-        text and voice conversations.</span>
-    </div>
-
-    <div class="section-title">Logging</div>
-    <div class="card">
-      <label class="field"><span class="lbl">Mod log channel</span>
-        <select id="s-log_channel">${channelOptions(settings.log_channel)}</select></label>
-    </div>
-
-    <button class="btn primary full" id="save-settings">Save server settings</button>
-
-    <div class="section-title">Bot presence (global)</div>
-    <div class="card">
-      <label class="field"><span class="lbl">Status</span>
-        <select id="p-status">${["online", "idle", "dnd", "invisible"].map((s) =>
-          `<option ${me.presence.status === s ? "selected" : ""}>${s}</option>`).join("")}</select></label>
-      <label class="field"><span class="lbl">Activity</span>
-        <select id="p-type">${["playing", "watching", "listening", "competing"].map((s) =>
-          `<option ${me.presence.activity_type === s ? "selected" : ""}>${s}</option>`).join("")}</select></label>
-      <label class="field"><span class="lbl">Activity text (empty = none)</span>
-        <input id="p-text" value="${esc(me.presence.text)}"></label>
-      <button class="btn full" id="save-presence">Update presence</button>
     </div>`;
+
+  document.querySelectorAll("[data-settings-tab]").forEach((btn) => {
+    btn.onclick = () => showSettingsPanel(btn.dataset.settingsTab);
+  });
 
   $("#memory-view-btn").onclick = async () => {
     const m = await api(`/guilds/${state.guildId}/memory`);
@@ -1013,6 +1090,9 @@ async function renderSettings() {
       // Blank is meaningful: the server turns it back into null, i.e.
       // "follow the Discord application name".
       bot_name: $("#s-bot_name").value.trim(),
+      fish_voice_id: $("#s-fish_voice_id").value.trim(),
+      fish_tts_model: $("#s-fish_tts_model").value.trim(),
+      edge_tts_voice: $("#s-edge_tts_voice").value.trim(),
       voice_detection_mode: $("#s-voice_detection_mode").value,
       voice_cue_thinking: readCue("thinking"),
       voice_cue_engaging: readCue("engaging"),

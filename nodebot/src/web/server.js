@@ -18,7 +18,7 @@ import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { ChannelType, ActivityType, PermissionsBitField } from 'discord.js';
-import { BUILD_ID, PORT, OWNER_ID } from '../config.js';
+import { BUILD_ID, PORT, OWNER_ID, FISH_API_KEY } from '../config.js';
 import {
   checkPassword, createToken, sessionOf, parseCookies,
   createState, verifyState, TOKEN_TTL,
@@ -37,7 +37,11 @@ import { logAction } from '../utils.js';
 import * as logbuffer from '../logbuffer.js';
 import * as voice from '../voice.js';
 import * as db from '../db.js';
+import { ttsSettingsMeta } from '../ttsConfig.js';
 
+const OPTIONAL_STRING_SETTINGS = new Set([
+  'bot_name', 'fish_voice_id', 'fish_tts_model', 'edge_tts_voice',
+]);
 const STATIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'static');
 // The showcase site at the repo root, served read-only under /site. It is a
 // marketing page with no backend — resolved relative to this file rather than
@@ -377,6 +381,8 @@ function buildRoutes(client) {
         // from) while leaving the field itself blank for "follow Discord".
         bot_name_effective: botName(client, g.id),
         bot_name_source: db.getSetting(g.id, 'bot_name') ? 'override' : 'discord',
+        fish_api_configured: Boolean(FISH_API_KEY),
+        ...ttsSettingsMeta(g.id),
       };
     }, { level: 'moderator' }],
 
@@ -387,13 +393,14 @@ function buildRoutes(client) {
         // than 400, so a client that round-trips the whole settings object
         // still saves cleanly.
         if (key === 'bot_name_effective' || key === 'bot_name_source') continue;
+        if (key === 'fish_api_configured'
+          || key.startsWith('fish_voice_id_')
+          || key.startsWith('fish_tts_model_')
+          || key.startsWith('edge_tts_voice_')) continue;
         if (!(key in db.DEFAULTS)) throw new HttpError(400, `Unknown setting: ${key}`);
-        if (key === 'bot_name') {
-          // Blank means "no override" — fall back to the Discord application
-          // name. Storing '' instead of null would pin the bot to an empty
-          // name everywhere and there would be no way back from the UI.
-          const name = typeof value === 'string' ? value.trim() : '';
-          db.setSetting(g.id, key, name || null);
+        if (OPTIONAL_STRING_SETTINGS.has(key)) {
+          const text = typeof value === 'string' ? value.trim() : '';
+          db.setSetting(g.id, key, text || null);
           continue;
         }
         // Phrase lists arrive from the dashboard as raw bracket text
