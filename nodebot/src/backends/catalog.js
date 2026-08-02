@@ -32,6 +32,38 @@ const now = () => Math.floor(Date.now() / 1000);
  * strings. They are stored per MILLION tokens, which is the unit everything
  * else quotes and avoids carrying numbers like 0.0000008 around.
  */
+/**
+ * Can this model be used for chat completions at all?
+ *
+ * OpenRouter's catalog is not a list of chat models — it is a list of
+ * *models*. Image generators, video generators, embedding models and music
+ * generators are all in there, and asking one of them for a chat completion
+ * returns a 502 "Provider returned error" rather than a clean rejection:
+ *
+ *   [proactive] signal classification failed: OpenRouter error 502
+ *     (google/lyria-3-clip-preview, background): Provider returned error
+ *
+ * `google/lyria-3-clip-preview` is a music generator. It will never answer a
+ * classification prompt no matter how many times it is retried, so the filter
+ * has to happen here, before it can ever be picked as a fallback.
+ *
+ * Prefers the explicit modality arrays and falls back to parsing the older
+ * `modality` string ("text->text", "text+image->text") for entries that
+ * predate them.
+ */
+export function canChat(entry) {
+  const arch = entry?.architecture || {};
+  const inputs = arch.input_modalities;
+  const outputs = arch.output_modalities;
+  if (Array.isArray(inputs) && Array.isArray(outputs)) {
+    return inputs.includes('text') && outputs.includes('text');
+  }
+  const modality = String(arch.modality || '');
+  if (!modality.includes('->')) return false; // unknown shape — do not guess
+  const [from, to] = modality.split('->');
+  return from.includes('text') && to.includes('text');
+}
+
 export function distil(entry) {
   if (!entry?.id) return null;
   const params = entry.supported_parameters || [];
@@ -54,6 +86,8 @@ export function distil(entry) {
     // conversational model — she has ~30 tools and degrades badly without
     // them. Background work does not care.
     supportsTools: params.includes('tools'),
+    // Whether it can hold a text conversation at all. See canChat().
+    canChat: canChat(entry),
   };
 }
 
@@ -89,12 +123,13 @@ export async function refresh({ fetchImpl = fetch } = {}) {
     db.prepare('DELETE FROM model_catalog').run();
     const insert = db.prepare(`
       INSERT INTO model_catalog
-        (id, name, context_length, prompt_price, completion_price, supports_tools, fetched_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+        (id, name, context_length, prompt_price, completion_price,
+         supports_tools, can_chat, fetched_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `);
     for (const row of rows) {
       insert.run(row.id, row.name, row.contextLength, row.promptPrice,
-        row.completionPrice, row.supportsTools ? 1 : 0, stamp);
+        row.completionPrice, row.supportsTools ? 1 : 0, row.canChat ? 1 : 0, stamp);
     }
     db.exec('COMMIT');
   } catch (err) {
@@ -115,9 +150,20 @@ function hydrate(row) {
     promptPrice: row.prompt_price,
     completionPrice: row.completion_price,
     supportsTools: Boolean(row.supports_tools),
+    canChat: Boolean(row.can_chat),
     fetchedAt: row.fetched_at * 1000,
   };
 }
+
+/**
+ * Smallest context window worth routing to.
+ *
+ * Memory consolidation alone asks for 4096 output tokens on top of durable
+ * memory, working memory, member profiles and a batch of turns. A model with a
+ * tiny window cannot do that job, and finding out costs a failed call and a
+ * lost consolidation rather than a clean rejection.
+ */
+export const MIN_CONTEXT_TOKENS = 16000;
 
 export function get(modelId) {
   if (!modelId) return null;
@@ -128,10 +174,23 @@ export function get(modelId) {
   }
 }
 
-/** Every known model, optionally filtered to those that can call tools. */
-export function list({ toolsOnly = false } = {}) {
+/**
+ * Models that are actually usable as a backend.
+ *
+ * Filtered, not raw: anything that cannot hold a text conversation, or whose
+ * context window is too small to do the work, is excluded — routing to one of
+ * those produces a 502 and a lost call rather than an answer. Pass
+ * `usable: false` to see the unfiltered cache.
+ */
+export function list({ toolsOnly = false, usable = true } = {}) {
+  const where = [];
+  if (toolsOnly) where.push('supports_tools = 1');
+  if (usable) {
+    where.push('can_chat = 1');
+    where.push(`(context_length IS NULL OR context_length >= ${MIN_CONTEXT_TOKENS})`);
+  }
   try {
-    const sql = `SELECT * FROM model_catalog${toolsOnly ? ' WHERE supports_tools = 1' : ''}`;
+    const sql = `SELECT * FROM model_catalog${where.length ? ` WHERE ${where.join(' AND ')}` : ''}`;
     return getDb().prepare(sql).all().map(hydrate);
   } catch {
     return [];
@@ -169,11 +228,24 @@ let timer = null;
  * Start the hourly refresh. Fetches once immediately if the catalog is empty,
  * so a fresh install has alternatives available before the first rate limit
  * rather than an hour after it.
+ *
+ * `afterRefresh` runs after each successful fetch. It exists so switching can
+ * re-check the stored models against a catalog it could not consult before —
+ * calling into switching from here directly would be a circular import, since
+ * switching is built on top of this module.
  */
-export function startRefreshing({ intervalMs = REFRESH_INTERVAL_MS } = {}) {
+export function startRefreshing({ intervalMs = REFRESH_INTERVAL_MS, afterRefresh } = {}) {
   if (timer) return timer;
-  if (isEmpty()) refresh();
-  timer = setInterval(() => { refresh(); }, intervalMs);
+  const run = async () => {
+    const stored = await refresh();
+    if (stored && afterRefresh) {
+      try { afterRefresh(); } catch (err) {
+        console.warn('[backends] post-refresh check failed:', err.message);
+      }
+    }
+  };
+  if (isEmpty()) run();
+  timer = setInterval(run, intervalMs);
   timer.unref?.(); // never hold the process open for a catalog refresh
   return timer;
 }

@@ -184,11 +184,30 @@ told to. By voice: "B", "the second one", "switch to Haiku", "switch back",
 logs it. Nobody is around at 3am, and the alternative is memory consolidation
 quietly stopping for the day.
 
+Either model can be changed by voice — "switch the maintenance model to Haiku"
+targets the background one, "switch to Haiku" the conversational one.
+
 The candidate list comes from OpenRouter's model catalog, refreshed hourly and
 cached in SQLite so a restart or an OpenRouter outage still leaves
 alternatives at the moment they are needed. A model that returns 429 is parked
 rather than dropped: fifteen minutes for a burst limit, six hours for a daily
-free-model quota, read out of the provider's own message.
+free-model quota, read out of the provider's own message. A 5xx parks it for
+five minutes — might be a blip, might be a model that can never answer.
+
+**The catalog is not a list of chat models.** It is a list of models, and image
+generators, music generators and embedding models are in it. Asking one of
+those for a completion returns `502 Provider returned error` rather than a
+clean rejection, forever, no matter how often it is retried — which is how
+background work once ended up pointed at `google/lyria-3-clip-preview`. So the
+catalog records whether each model takes text in and gives text out, and only
+those are offered. A context window under 16k is excluded too: memory
+consolidation alone asks for 4096 output tokens on top of a full prompt.
+
+Three places enforce it, because the failure survives any one of them. The
+shortlist never offers a non-chat model; switching by name refuses one asked
+for by exact id; and every catalog refresh re-checks the models already
+configured, since a choice made before the catalog knew better is written to a
+setting and outlives the call that made it.
 
 **The answer matching uses no model at all.** This whole path fires when the
 model backend is unavailable, so anything needing a model to interpret "switch

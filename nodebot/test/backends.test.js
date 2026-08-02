@@ -13,11 +13,12 @@ import * as switching from '../src/backends/switching.js';
 function withDb(fn) {
   return async () => {
     const dir = mkdtempSync(path.join(tmpdir(), 'nodebot-backends-'));
-    db.initDb(path.join(dir, 'test.db'));
+    const file = path.join(dir, 'test.db');
+    db.initDb(file);
     switching.clearCooldowns();
     switching.clearOffer('1');
     try {
-      await fn();
+      await fn(file);
     } finally {
       db.closeDb();
       rmSync(dir, { recursive: true, force: true });
@@ -28,12 +29,16 @@ function withDb(fn) {
 /** An OpenRouter /models entry, in the shape the real endpoint returns. */
 const entry = (id, {
   name, prompt = '0', completion = '0', context = 128000, tools = true,
+  inputs = ['text'], outputs = ['text'], architecture,
 } = {}) => ({
   id,
   name: name || id,
   context_length: context,
   pricing: { prompt, completion, request: '0', image: '0' },
   supported_parameters: tools ? ['tools', 'tool_choice', 'max_tokens'] : ['max_tokens'],
+  architecture: architecture !== undefined
+    ? architecture
+    : { input_modalities: inputs, output_modalities: outputs },
 });
 
 const fakeFetch = (entries) => async () => ({
@@ -46,8 +51,9 @@ function seedCatalog() {
   const handle = db.getDb();
   const insert = handle.prepare(`
     INSERT INTO model_catalog
-      (id, name, context_length, prompt_price, completion_price, supports_tools, fetched_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+      (id, name, context_length, prompt_price, completion_price, supports_tools,
+       can_chat, fetched_at)
+    VALUES (?, ?, ?, ?, ?, ?, 1, ?)
   `);
   const at = Math.floor(Date.now() / 1000);
   insert.run('openrouter/free', 'OpenRouter: Auto (free)', 64000, 0, 0, 1, at);
@@ -55,7 +61,7 @@ function seedCatalog() {
   insert.run('budget/cheapo', 'Budget: Cheapo', 128000, 0.05, 0.1, 1, at);
   insert.run('anthropic/claude-3.5-haiku', 'Anthropic: Claude 3.5 Haiku', 200000, 0.8, 4, 1, at);
   insert.run('anthropic/claude-opus-4', 'Anthropic: Claude Opus 4', 200000, 15, 75, 1, at);
-  insert.run('nontool/parrot', 'Nontool: Parrot', 8000, 0.01, 0.02, 0, at);
+  insert.run('nontool/parrot', 'Nontool: Parrot', 32000, 0.01, 0.02, 0, at);
 }
 
 /* ── Catalog ────────────────────────────────────────────────────────────── */
@@ -94,6 +100,82 @@ test('a failed refresh keeps the previous catalog', withDb(async () => {
   // An empty response is the same kind of non-answer as a network failure.
   assert.equal(await catalog.refresh({ fetchImpl: fakeFetch([]) }), 0);
   assert.equal(catalog.list().length, 1);
+}));
+
+test('a model that cannot answer in text is not a chat model', () => {
+  // The bug this exists for: google/lyria-3-clip-preview is a music generator
+  // sitting in the same catalog as the chat models. Asking it to classify a
+  // signal returns 502 "Provider returned error" forever.
+  const music = entry('google/lyria-3-clip-preview', {
+    inputs: ['text'], outputs: ['audio'],
+  });
+  assert.equal(catalog.canChat(music), false);
+  assert.equal(catalog.distil(music).canChat, false);
+
+  assert.equal(catalog.canChat(entry('a/b')), true);
+  // Vision models take images but still answer in text — perfectly usable.
+  assert.equal(catalog.canChat(entry('a/b', { inputs: ['text', 'image'] })), true);
+  // Image generators and embedding models are not.
+  assert.equal(catalog.canChat(entry('a/b', { outputs: ['image'] })), false);
+  assert.equal(catalog.canChat(entry('a/b', { inputs: ['image'], outputs: ['image'] })), false);
+});
+
+test('the older modality string is read when the arrays are missing', () => {
+  const legacy = (modality) => entry('a/b', { architecture: { modality } });
+  assert.equal(catalog.canChat(legacy('text->text')), true);
+  assert.equal(catalog.canChat(legacy('text+image->text')), true);
+  assert.equal(catalog.canChat(legacy('text->image')), false);
+  // An entry with no modality information at all is not assumed to be usable:
+  // guessing here is what produced the 502 in the first place.
+  assert.equal(catalog.canChat(entry('a/b', { architecture: {} })), false);
+  assert.equal(catalog.canChat({ id: 'a/b' }), false);
+});
+
+test('non-chat models never reach the usable list', withDb(async () => {
+  await catalog.refresh({
+    fetchImpl: fakeFetch([
+      entry('a/talker'),
+      entry('google/lyria-3-clip-preview', { outputs: ['audio'] }),
+      entry('someone/painter', { outputs: ['image'] }),
+    ]),
+  });
+  assert.deepEqual(catalog.list().map((m) => m.id), ['a/talker']);
+  // The cache still holds them — the filter is at read time, so a fix to the
+  // rule takes effect without waiting an hour for the next refresh.
+  assert.equal(catalog.list({ usable: false }).length, 3);
+}));
+
+test('a context window too small to do the work is not offered', withDb(async () => {
+  await catalog.refresh({
+    fetchImpl: fakeFetch([
+      entry('a/roomy', { context: catalog.MIN_CONTEXT_TOKENS }),
+      entry('a/cramped', { context: 4096 }),
+    ]),
+  });
+  // Memory consolidation alone asks for 4096 output tokens on top of a full
+  // prompt; a 4k model fails the call rather than doing a worse job of it.
+  assert.deepEqual(catalog.list().map((m) => m.id), ['a/roomy']);
+}));
+
+test('a cache written before can_chat existed is rebuilt, not trusted', withDb(async (file) => {
+  // Backfilling the column is not possible: the modality data lives in the API
+  // response, not in the cached row. Either default would be a guess, so the
+  // stale shape is dropped and refetched.
+  const handle = db.getDb();
+  handle.exec('DROP TABLE model_catalog');
+  handle.exec(`CREATE TABLE model_catalog (
+    id TEXT PRIMARY KEY, name TEXT, context_length INTEGER,
+    prompt_price REAL, completion_price REAL, supports_tools INTEGER,
+    fetched_at INTEGER
+  )`);
+  handle.prepare('INSERT INTO model_catalog VALUES (?,?,?,?,?,?,?)')
+    .run('google/lyria-3-clip-preview', 'Lyria', 32000, 0, 0, 1, Math.floor(Date.now() / 1000));
+
+  db.closeDb();
+  db.initDb(file); // re-opening an old database runs the shape check
+  assert.equal(catalog.isEmpty(), true, 'the old cache is gone rather than half-read');
+  await catalog.refresh({ fetchImpl: fakeFetch([entry('a/talker')]) });
+  assert.deepEqual(catalog.list().map((m) => m.id), ['a/talker']);
 }));
 
 test('toolsOnly filters out models that cannot call tools', withDb(() => {
@@ -236,6 +318,41 @@ test('background work reroutes itself without asking', withDb(() => {
   assert.ok(rotated);
   assert.notEqual(rotated.to, 'openrouter/free');
   assert.equal(switching.currentModel('1', 'utility'), rotated.to);
+}));
+
+test('a stored model that can never answer is dropped before it is called', withDb(() => {
+  // The production failure: rotation picked a music generator before the
+  // catalog knew to exclude one, wrote it to a setting, and every background
+  // call after that returned 502 — the parked cooldown did nothing, because
+  // the role reads its model from the setting, not from the shortlist.
+  seedCatalog();
+  switching.clearCooldowns();
+  const at = Math.floor(Date.now() / 1000);
+  db.getDb().prepare(`
+    INSERT INTO model_catalog
+      (id, name, context_length, prompt_price, completion_price, supports_tools,
+       can_chat, fetched_at)
+    VALUES (?, ?, ?, ?, ?, ?, 0, ?)
+  `).run('google/lyria-3-clip-preview', 'Google: Lyria 3', 32000, 0, 0, 1, at);
+  db.setSetting('1', 'ai_utility_model', 'google/lyria-3-clip-preview');
+
+  const evicted = switching.evictUnusable();
+  assert.equal(evicted.length, 1);
+  assert.equal(evicted[0].role, 'utility');
+  assert.notEqual(switching.currentModel('1', 'utility'), 'google/lyria-3-clip-preview');
+  // And it cannot come straight back through the shortlist.
+  assert.equal(switching.isAvailable('google/lyria-3-clip-preview'), false);
+}));
+
+test('a model the catalog does not list is left alone', withDb(() => {
+  // Absence is not evidence of unusability. A hand-set id OpenRouter happens
+  // not to list is a deliberate choice, and overriding it would be worse than
+  // the failure it is trying to prevent.
+  seedCatalog();
+  switching.clearCooldowns();
+  db.setSetting('1', 'ai_utility_model', 'someone/unlisted');
+  assert.deepEqual(switching.evictUnusable(), []);
+  assert.equal(switching.currentModel('1', 'utility'), 'someone/unlisted');
 }));
 
 test('background rerouting gives up loudly when there is nowhere to go', withDb(() => {
