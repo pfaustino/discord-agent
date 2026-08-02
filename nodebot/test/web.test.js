@@ -3,9 +3,10 @@
 // are all exercised the way a browser exercises them.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { createDashboard, matchRoute } from '../src/web/server.js';
 import { createToken, verifyToken, checkPassword } from '../src/web/auth.js';
 import * as db from '../src/db.js';
@@ -298,6 +299,32 @@ test('the logs endpoint reports entries and the latest id', () => withServer(asy
   assert.ok(Array.isArray(body.entries));
   assert.equal(typeof body.latest, 'number');
 }));
+
+// -- every settings key the dashboard sends must exist in DEFAULTS ------------
+
+// The PUT rejects an unknown key with a 400, and a 400 fails the WHOLE payload,
+// not the offending field — so one key in app.js that isn't in db.DEFAULTS
+// silently breaks an entire dashboard tab. That has happened twice already
+// (ai_capability_prompt, then ai_channels), and each time it was caught by
+// hand and fixed with a one-off test for that one key.
+//
+// This checks the actual relationship instead: scrape every `key: $("#s-...")`
+// out of app.js's save handlers and assert DEFAULTS knows about it. A new
+// control added to the dashboard without a matching default now fails here
+// rather than in production.
+test('every s- prefixed settings key in app.js exists in db.DEFAULTS', () => {
+  const appJs = readFileSync(
+    path.join(path.dirname(fileURLToPath(import.meta.url)), '../src/web/static/app.js'),
+    'utf8',
+  );
+  const keys = [...appJs.matchAll(/(\w+):\s*\$\("#s-(\w+)"\)/g)].map((m) => m[1]);
+  assert.ok(keys.length > 20, `expected to find the settings payload, found ${keys.length} keys`);
+
+  // Read-only fields the GET adds back; server.js skips them by name.
+  const readOnly = new Set(['bot_name_effective', 'bot_name_source']);
+  const unknown = [...new Set(keys)].filter((k) => !readOnly.has(k) && !(k in db.DEFAULTS));
+  assert.deepEqual(unknown, [], `dashboard sends keys missing from db.DEFAULTS: ${unknown.join(', ')}`);
+});
 
 // -- the persona save the dashboard actually performs -------------------------
 

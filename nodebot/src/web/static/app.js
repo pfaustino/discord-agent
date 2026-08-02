@@ -864,7 +864,7 @@ async function renderSettings() {
         <span class="muted">The bot always replies when @mentioned, in any channel.</span></label>
     </div>
 
-    <div class="section-title">Image &amp; video generation</div>
+    <div class="section-title">Images &amp; video</div>
     <div class="card">
       <label class="toggle"><input type="checkbox" id="s-media_enabled"
         ${settings.media_enabled ? "checked" : ""}> Let the bot generate images and video</label>
@@ -879,6 +879,12 @@ async function renderSettings() {
       <label class="field"><span class="lbl">Video model</span>
         <input id="s-media_video_model" value="${esc(settings.media_video_model || "")}"
           placeholder="google/veo-3.1"></label>
+      <label class="field"><span class="lbl">Vision model — reads pictures people post</span>
+        <input id="s-media_vision_model" value="${esc(settings.media_vision_model || "")}"
+          placeholder="${esc(settings.ai_model || "")}">
+        <span class="muted">Only used on messages that actually have an image attached,
+          and it answers that whole turn. Leave blank to use the chat model above.
+          Worth setting when that model can't read images.</span></label>
       <label class="field"><span class="lbl">Videos per hour, server-wide (0 = no cap)</span>
         <input id="s-media_video_hourly_cap" type="number" min="0" value="${settings.media_video_hourly_cap ?? 5}"></label>
       <span class="muted">Every image and every clip is billed against this instance's
@@ -1023,6 +1029,7 @@ async function renderSettings() {
       media_access: $("#s-media_access").value,
       media_image_model: $("#s-media_image_model").value.trim(),
       media_video_model: $("#s-media_video_model").value.trim(),
+      media_vision_model: $("#s-media_vision_model").value.trim(),
       media_video_hourly_cap: parseInt($("#s-media_video_hourly_cap").value, 10) || 0,
       pressure_enabled: $("#s-pressure_enabled").checked,
       deesc_enabled: $("#s-deesc_enabled").checked,

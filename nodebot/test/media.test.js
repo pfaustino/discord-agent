@@ -17,8 +17,10 @@ import * as media from '../src/media.js';
 import * as mediaTools from '../src/mediaTools.js';
 import * as documents from '../src/documents.js';
 import { stripImageParts } from '../src/openrouter.js';
+import { modelForTurn } from '../src/textChat.js';
 
 const OWNER = 'owner-1';
+const GUILD = '1'; // matches fakeMessage's guild id
 
 function jsonResponse(body, status = 200) {
   return { ok: status < 400, status, text: async () => JSON.stringify(body) };
@@ -650,4 +652,40 @@ test('the input is not mutated — the caller may still need the original', () =
 test('an empty or missing message list is handled without throwing', () => {
   assert.deepEqual(stripImageParts([]), { messages: [], changed: false });
   assert.deepEqual(stripImageParts(undefined), { messages: [], changed: false });
+});
+
+// -- which model answers a turn with an image ---------------------------------
+
+// The vision pin is a separate axis from the two generation models: it isn't a
+// different endpoint, just the ordinary chat call being handed a picture. So it
+// falls back to ai_model rather than to an env default, and it only applies to
+// turns that actually carry an image.
+test('a turn with no image stays on ai_model', withDb(async () => {
+  db.setSetting(GUILD, 'ai_model', 'chat/model');
+  db.setSetting(GUILD, 'media_vision_model', 'vision/model');
+  assert.equal(modelForTurn(GUILD, false), 'chat/model');
+}));
+
+test('a turn with an image uses the vision pin when one is set', withDb(async () => {
+  db.setSetting(GUILD, 'ai_model', 'chat/model');
+  db.setSetting(GUILD, 'media_vision_model', 'vision/model');
+  assert.equal(modelForTurn(GUILD, true), 'vision/model');
+}));
+
+test('an unset vision pin leaves an image turn on ai_model', withDb(async () => {
+  db.setSetting(GUILD, 'ai_model', 'chat/model');
+  assert.equal(modelForTurn(GUILD, true), 'chat/model');
+}));
+
+// The dashboard sends '' for an empty box, not null — a blank field has to read
+// as "no pin" rather than pinning every image turn to the empty string.
+test('a blank vision pin saved from the dashboard is treated as unset', withDb(async () => {
+  db.setSetting(GUILD, 'ai_model', 'chat/model');
+  db.setSetting(GUILD, 'media_vision_model', '');
+  assert.equal(modelForTurn(GUILD, true), 'chat/model');
+}));
+
+test('media_vision_model defaults to null so the settings PUT accepts it', () => {
+  assert.ok('media_vision_model' in db.DEFAULTS);
+  assert.equal(db.DEFAULTS.media_vision_model, null);
 });

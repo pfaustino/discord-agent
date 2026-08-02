@@ -84,6 +84,21 @@ export function runRepoTool(name, args = {}) {
   return `unknown repo tool: ${name}`;
 }
 
+/**
+ * Which model answers this turn.
+ *
+ * A turn carrying an image can be routed to its own model, because plenty of
+ * cheap conversational models can't read one at all — and the reply for that
+ * turn comes from whichever model is picked here, not just the description of
+ * the picture. An unset pin, or a blank one saved from the dashboard, leaves
+ * every turn on ai_model, so this is inert until somebody opts in.
+ */
+export function modelForTurn(guildId, hasImages) {
+  const vision = db.getSetting(guildId, 'media_vision_model');
+  if (hasImages && vision) return vision;
+  return db.getSetting(guildId, 'ai_model');
+}
+
 function toolHandler(client, message, owner) {
   return async (name, args) => {
     if (name === 'recall_chat_log') return memory.recall(message.guild.id, args);
@@ -187,7 +202,7 @@ export async function handleMessage(client, message) {
   const systemPrompt = buildSystemPrompt({
     client, guild: message.guild, owner, memory: memoryBlock, media: canGenerate,
   });
-  const model = db.getSetting(guildId, 'ai_model');
+  const model = modelForTurn(guildId, imageParts.length > 0);
   const baseTools = [
     ...TOOL_SCHEMAS, ...KB_TOOL_SCHEMAS, memory.RECALL_TOOL_SCHEMA,
     ...github.GITHUB_TOOL_SCHEMAS, ...REPO_TOOL_SCHEMAS,

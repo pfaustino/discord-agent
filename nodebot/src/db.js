@@ -201,6 +201,13 @@ export const DEFAULTS = {
   // guild that hasn't chosen its own model.
   media_image_model: null,
   media_video_model: null,
+  // Which model looks at pictures people post. Different axis from the two
+  // above: those are generation endpoints, this one is the ordinary chat call
+  // that happens to be handed an image, so null falls back to ai_model rather
+  // than to an env var. Worth pinning when the conversational model is cheap
+  // and text-only — the reply for a turn with an image comes from whatever is
+  // set here, so it should still be a model you're happy talking to.
+  media_vision_model: null,
   // Spend breaker for the expensive half: videos per guild per hour, 0 to
   // disable the cap entirely. Images are cheap enough to leave uncapped.
   media_video_hourly_cap: 5,
