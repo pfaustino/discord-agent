@@ -17,10 +17,21 @@ function pickOverride(guildId, key) {
   }
 }
 
+/** Fish voice ids are hex strings; admins often paste the full fish.audio URL. */
+export function normalizeFishVoiceId(value) {
+  const text = String(value ?? '').trim();
+  if (!text) return '';
+  const fromPath = text.match(/\/m\/([0-9a-f]{32})/i);
+  if (fromPath) return fromPath[1].toLowerCase();
+  return text.replace(/^https?:\/\/[^/]+\//i, '').trim();
+}
+
 /** Resolved TTS config for one guild (dashboard override or env default). */
 export function ttsConfigForGuild(guildId) {
+  const envVoice = normalizeFishVoiceId(FISH_VOICE_ID);
+  const overrideVoice = pickOverride(guildId, 'fish_voice_id');
   return {
-    fishVoiceId: pickOverride(guildId, 'fish_voice_id') || FISH_VOICE_ID,
+    fishVoiceId: normalizeFishVoiceId(overrideVoice || envVoice),
     fishModel: pickOverride(guildId, 'fish_tts_model') || FISH_TTS_MODEL,
     edgeVoice: pickOverride(guildId, 'edge_tts_voice') || EDGE_TTS_VOICE,
   };

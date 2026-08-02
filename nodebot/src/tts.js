@@ -178,7 +178,17 @@ export async function synthesize(text, { guildId = null } = {}) {
       return audio;
     }
   }
-  return synthesizeWith(stripVoiceTags(text), EDGE_CHUNK, (chunk) => edge(chunk, cfg), 'edge');
+  const edgeAudio = await synthesizeWith(stripVoiceTags(text), EDGE_CHUNK, (chunk) => edge(chunk, cfg), 'edge');
+  if (!edgeAudio) logTtsFailure(guildId, cfg);
+  return edgeAudio;
+}
+
+function logTtsFailure(guildId, cfg) {
+  console.warn(
+    `[tts] no audio for guild ${guildId ?? '?'}`
+    + ` (fish voice=${cfg.fishVoiceId || '(none)'}, model=${cfg.fishModel}`
+    + `, edge=${cfg.edgeVoice})`,
+  );
 }
 
 async function fish(text, cfg) {

@@ -1,7 +1,7 @@
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import * as db from '../src/db.js';
-import { ttsConfigForGuild, ttsSettingsMeta } from '../src/ttsConfig.js';
+import { ttsConfigForGuild, ttsSettingsMeta, normalizeFishVoiceId } from '../src/ttsConfig.js';
 
 const DB = ':memory:';
 
@@ -36,6 +36,11 @@ test('per-guild overrides win over env defaults', withDb(() => {
   assert.equal(cfg.edgeVoice, 'en-GB-SoniaNeural');
 }));
 
+test('fish voice id accepts a full fish.audio URL', withDb(() => {
+  db.setSetting('1', 'fish_voice_id', 'https://fish.audio/m/abc123def4567890abc123def4567890');
+  assert.equal(ttsConfigForGuild('1').fishVoiceId, 'abc123def4567890abc123def4567890');
+}));
+
 test('blank overrides fall back to env', withDb(() => {
   db.setSetting('1', 'fish_voice_id', '   ');
   const cfg = ttsConfigForGuild('1');
@@ -49,6 +54,13 @@ test('settings meta reports override vs env source', withDb(() => {
   assert.equal(meta.edge_tts_voice_source, 'override');
   assert.equal(meta.fish_tts_model_source, 'env');
 }));
+
+test('normalizeFishVoiceId strips a fish.audio URL down to the hex id', () => {
+  assert.equal(
+    normalizeFishVoiceId('https://fish.audio/m/75408e3774fa427ba4a0fd6adebd631e'),
+    '75408e3774fa427ba4a0fd6adebd631e',
+  );
+});
 
 test('guilds are isolated', withDb(() => {
   db.setSetting('1', 'fish_voice_id', 'guild-one');
