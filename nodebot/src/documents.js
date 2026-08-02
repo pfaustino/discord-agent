@@ -1,10 +1,16 @@
-// Extracts readable text from message attachments so the AI can review
-// documents dropped in chat: plain text/code/markdown, PDFs, and Word docs.
-// Ported from documents.py.
+// Turns message attachments into something the AI can actually use. Two jobs:
 //
-// Extraction is automatic (like the GitHub-link auto-attach in tools.js) —
-// no tool call needed, the text is folded into the user's message before it
-// reaches the model.
+//   1. Documents — readable text pulled out of plain text/code/markdown, PDFs
+//      and Word docs, folded into the user's message as more text.
+//   2. Images — PNG/JPEG/WebP/GIF handed to the model as multimodal content
+//      parts, so it can look at screenshots and photos rather than guess from
+//      the filename.
+//
+// Ported from documents.py, which only did the first job.
+//
+// Both are automatic (like the GitHub-link auto-attach in tools.js) — no tool
+// call needed, the extra context is assembled before the message reaches the
+// model.
 //
 // The Python version imported pypdf/python-docx lazily and degraded to
 // "support isn't installed" when they were missing. Here the parsers are
@@ -18,11 +24,27 @@ const EXTRACT_MAX = 8000;                // chars of extracted text kept per doc
 
 export { MAX_FILE_BYTES, MAX_ATTACHMENTS, EXTRACT_MAX };
 
+export const MAX_IMAGES = 4;                    // images shown to the model per message
+export const MAX_IMAGE_BYTES = 8 * 1024 * 1024; // per image, before base64 inflates it ~4/3
+
 const TEXT_EXTENSIONS = new Set([
   'txt', 'md', 'markdown', 'csv', 'json', 'log', 'yaml', 'yml',
   'py', 'js', 'ts', 'jsx', 'tsx', 'html', 'css', 'xml', 'toml',
   'ini', 'cfg', 'sh', 'rb', 'go', 'rs', 'java', 'c', 'cpp', 'h',
 ]);
+
+// The four formats vision models reliably accept. Anything else a phone or
+// camera might produce (bmp, tiff, heic) is dropped rather than sent through
+// and rejected by the provider mid-request.
+const IMAGE_MEDIA_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
+
+const IMAGE_EXTENSION_TYPES = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  webp: 'image/webp',
+  gif: 'image/gif',
+};
 
 function ext(filename) {
   return filename.includes('.') ? filename.split('.').pop().toLowerCase() : '';
@@ -133,4 +155,61 @@ export async function buildAttachmentContext(message) {
     parts.push(`[${skipped} more attachment(s) not read — max ${MAX_ATTACHMENTS} per message]`);
   }
   return parts.join('\n\n');
+}
+
+/**
+ * The media type to send this attachment as, or null if it isn't an image a
+ * vision model can read.
+ */
+export function imageMediaType(attachment) {
+  // discord.js calls it `name`; the Python original called it `filename`.
+  const filename = attachment.name || attachment.filename || '';
+  const contentType = attachment.contentType || attachment.content_type || '';
+  // Discord's type can carry parameters ("image/jpeg; charset=..."), and it's
+  // trusted over the extension because the uploader picks the extension.
+  const declared = contentType.split(';')[0].trim().toLowerCase();
+  if (declared) return IMAGE_MEDIA_TYPES.has(declared) ? declared : null;
+  return IMAGE_EXTENSION_TYPES[ext(filename)] || null;
+}
+
+/**
+ * Images from a message as OpenAI-style content parts, plus one note per image
+ * to append to the message text. The notes tell the model which images are
+ * attached, and explain any that were skipped.
+ */
+export async function buildImageParts(message) {
+  const attachments = [...(message.attachments?.values?.() ?? message.attachments ?? [])];
+  const images = attachments.filter((attachment) => imageMediaType(attachment));
+  if (!images.length) return { parts: [], notes: [] };
+
+  const parts = [];
+  const notes = [];
+  for (const attachment of images.slice(0, MAX_IMAGES)) {
+    const filename = attachment.name || attachment.filename || 'image';
+    if (attachment.size > MAX_IMAGE_BYTES) {
+      notes.push(`[${filename} is ${Math.floor(attachment.size / 1024)}KB — too large to look at]`);
+      continue;
+    }
+    let data;
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      data = await readAttachment(attachment);
+    } catch (err) {
+      console.warn('[documents] could not download image:', err?.message || err);
+      notes.push(`[Couldn't download ${filename}]`);
+      continue;
+    }
+    // Inline the bytes as a data URL instead of forwarding Discord's CDN link:
+    // those links are signed and expire, and not every provider will fetch a
+    // remote URL at all.
+    const url = `data:${imageMediaType(attachment)};base64,${Buffer.from(data).toString('base64')}`;
+    parts.push({ type: 'image_url', image_url: { url } });
+    notes.push(`[attached image: ${filename}]`);
+  }
+
+  const skipped = images.length - MAX_IMAGES;
+  if (skipped > 0) {
+    notes.push(`[${skipped} more image(s) not shown — max ${MAX_IMAGES} per message]`);
+  }
+  return { parts, notes };
 }

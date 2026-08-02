@@ -192,6 +192,30 @@ export const DEFAULTS = {
   deesc_harsh_language: false,
   // background/utility model override; null falls back to the env default
   ai_utility_model: null,
+  // Image and video generation. Unlike everything else here, each use spends
+  // real money per generation, so access starts at the narrowest setting that
+  // is still useful: 'owner' means only OWNER_ID can ask for one, 'everyone'
+  // opens it to the whole server. Video is roughly ten times the cost of an
+  // image, so handing a busy server an unmetered button is a decision someone
+  // should make on purpose rather than inherit from a default.
+  media_enabled: true,
+  media_access: 'owner',
+  // Per-guild model pins. null means "use whatever OPENROUTER_IMAGE_MODEL /
+  // OPENROUTER_VIDEO_MODEL is set to" — mediaTools.js resolves the fallback at
+  // call time, deliberately not read here, so changing the env var moves every
+  // guild that hasn't chosen its own model.
+  media_image_model: null,
+  media_video_model: null,
+  // Which model looks at pictures people post. Different axis from the two
+  // above: those are generation endpoints, this one is the ordinary chat call
+  // that happens to be handed an image, so null falls back to ai_model rather
+  // than to an env var. Worth pinning when the conversational model is cheap
+  // and text-only — the reply for a turn with an image comes from whatever is
+  // set here, so it should still be a model you're happy talking to.
+  media_vision_model: null,
+  // Spend breaker for the expensive half: videos per guild per hour, 0 to
+  // disable the cap entirely. Images are cheap enough to leave uncapped.
+  media_video_hourly_cap: 5,
   // What each model was before the last backend switch, so "switch back"
   // works after she has rerouted around a rate-limited provider. Persisted
   // rather than held in memory so a redeploy mid-incident doesn't strand a

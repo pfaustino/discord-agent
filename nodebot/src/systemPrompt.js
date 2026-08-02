@@ -3,14 +3,17 @@
 // ai.py build_system_prompt.
 //
 // The order matters and matches Python's: who he is, then what server he is
-// actually running and its real command list, then what he can do, then
-// whether he is talking to the owner, then what he remembers.
+// actually running and its real command list, then what he can do — including
+// what he can see and, where allowed, make — then whether he is talking to
+// the owner, then what he remembers.
 //
 // Lives here rather than in persona.js because it reads settings, and
 // persona.js is imported BY db.js — putting it there would be a cycle.
 import * as db from './db.js';
 import { botName } from './botName.js';
-import { OWNER_NOTE, MEMBER_NOTE } from './persona.js';
+import {
+  OWNER_NOTE, MEMBER_NOTE, MEDIA_NOTE, VISION_NOTE,
+} from './persona.js';
 
 /** The bot's real slash commands, straight from the table index.js loaded.
  *
@@ -38,8 +41,11 @@ export function commandList(client) {
  * @param {object}  opts.guild    the guild being served
  * @param {boolean} opts.owner    is the speaker the bot owner
  * @param {string}  opts.memory   memory block, already rendered (may be empty)
+ * @param {boolean} opts.media    may this speaker generate images/video
  */
-export function buildSystemPrompt({ client, guild, owner = false, memory = '' }) {
+export function buildSystemPrompt({
+  client, guild, owner = false, memory = '', media = false,
+}) {
   const persona = db.getSetting(guild.id, 'ai_system_prompt');
   const capabilities = db.getSetting(guild.id, 'ai_capability_prompt');
   const name = botName(client, guild.id);
@@ -54,6 +60,8 @@ export function buildSystemPrompt({ client, guild, owner = false, memory = '' })
     persona,
     selfAwareness,
     capabilities,
+    VISION_NOTE,
+    media ? MEDIA_NOTE : '',
     owner ? OWNER_NOTE : MEMBER_NOTE,
     memory ? `What you remember (maintained across restarts):\n${memory}` : '',
   ].filter(Boolean).join('\n\n');

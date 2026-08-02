@@ -3,9 +3,10 @@
 // are all exercised the way a browser exercises them.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { createDashboard, matchRoute } from '../src/web/server.js';
 import { createToken, verifyToken, checkPassword } from '../src/web/auth.js';
 import * as db from '../src/db.js';
@@ -333,6 +334,32 @@ test('the logs endpoint reports entries and the latest id', () => withServer(asy
   assert.equal(typeof body.latest, 'number');
 }));
 
+// -- every settings key the dashboard sends must exist in DEFAULTS ------------
+
+// The PUT rejects an unknown key with a 400, and a 400 fails the WHOLE payload,
+// not the offending field — so one key in app.js that isn't in db.DEFAULTS
+// silently breaks an entire dashboard tab. That has happened twice already
+// (ai_capability_prompt, then ai_channels), and each time it was caught by
+// hand and fixed with a one-off test for that one key.
+//
+// This checks the actual relationship instead: scrape every `key: $("#s-...")`
+// out of app.js's save handlers and assert DEFAULTS knows about it. A new
+// control added to the dashboard without a matching default now fails here
+// rather than in production.
+test('every s- prefixed settings key in app.js exists in db.DEFAULTS', () => {
+  const appJs = readFileSync(
+    path.join(path.dirname(fileURLToPath(import.meta.url)), '../src/web/static/app.js'),
+    'utf8',
+  );
+  const keys = [...appJs.matchAll(/(\w+):\s*\$\("#s-(\w+)"\)/g)].map((m) => m[1]);
+  assert.ok(keys.length > 20, `expected to find the settings payload, found ${keys.length} keys`);
+
+  // Read-only fields the GET adds back; server.js skips them by name.
+  const readOnly = new Set(['bot_name_effective', 'bot_name_source']);
+  const unknown = [...new Set(keys)].filter((k) => !readOnly.has(k) && !(k in db.DEFAULTS));
+  assert.deepEqual(unknown, [], `dashboard sends keys missing from db.DEFAULTS: ${unknown.join(', ')}`);
+});
+
 // -- the persona save the dashboard actually performs -------------------------
 
 // app.js's "Save persona" button PUTs both halves together. ai_capability_prompt
@@ -478,4 +505,34 @@ test('role mappings save like any other setting', () => withServer(async (call) 
   const s = await (await call('GET', '/api/guilds/111/settings', { cookie: cookieFor('admin') })).json();
   assert.deepEqual(s.dashboard_admin_roles, ['500']);
   assert.deepEqual(s.dashboard_mod_roles, ['600']);
+}));
+
+/* ── Legal pages ──────────────────────────────────────────────────────────
+   These URLs go into Discord's application settings and cannot be changed
+   afterwards without breaking the link, so they get tested like an API. */
+
+test('the legal pages are served, unauthenticated, at their short URLs', () => withServer(async (call) => {
+  for (const [urlPath, marker] of [['/privacy', 'Privacy Policy'], ['/terms', 'Terms of Service']]) {
+    const res = await call('GET', urlPath);
+    assert.equal(res.status, 200, `${urlPath} must not require signing in`);
+    assert.match(res.headers.get('content-type'), /text\/html/);
+    const html = await res.text();
+    assert.match(html, new RegExp(`<title>${marker}`));
+    // Assets have to be absolute: the same file is reachable at /privacy and
+    // at /site/privacy.html, and a relative href resolves differently at each.
+    assert.ok(!/(href|src)="(?!\/|https?:|data:|mailto:|#)/.test(html),
+      `${urlPath} has a relative link that will 404 at this depth`);
+  }
+}));
+
+test('the alternate spellings resolve to the same pages', () => withServer(async (call) => {
+  // Whichever form gets pasted somewhere permanent, it works.
+  assert.match(await (await call('GET', '/privacy-policy')).text(), /<title>Privacy Policy/);
+  assert.match(await (await call('GET', '/tos')).text(), /<title>Terms of Service/);
+}));
+
+test('the legal routes cannot be walked out of the site directory', () => withServer(async (call) => {
+  // The route table is a fixed map rather than a path join, so there is no
+  // user-supplied segment to traverse with — this pins that down.
+  assert.equal((await call('GET', '/privacy/../../package.json')).status, 404);
 }));

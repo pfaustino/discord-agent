@@ -811,6 +811,7 @@ async function renderSettings() {
     { id: "automod", label: "Automod" },
     { id: "access", label: "Dashboard access" },
     { id: "ai", label: "AI" },
+    { id: "media", label: "Images & video" },
     { id: "voice-detect", label: "Voice detection" },
     { id: "voice-cues", label: "Voice cues" },
     { id: "voice-phrases", label: "Wake & stop words" },
@@ -907,6 +908,38 @@ async function renderSettings() {
           </div>
         </section>
 
+        <section class="settings-panel ${activeTab === "media" ? "active" : ""}" data-panel="media">
+          <div class="section-title">Images &amp; video</div>
+          <div class="card">
+            <label class="toggle"><input type="checkbox" id="s-media_enabled"
+              ${settings.media_enabled ? "checked" : ""}> Let the bot generate images and video</label>
+            <label class="field"><span class="lbl">Who can ask for one</span>
+              <select id="s-media_access">
+                <option value="owner" ${settings.media_access !== "everyone" ? "selected" : ""}>Owner only</option>
+                <option value="everyone" ${settings.media_access === "everyone" ? "selected" : ""}>Everyone in this server</option>
+              </select></label>
+            <label class="field"><span class="lbl">Image model</span>
+              <input id="s-media_image_model" value="${esc(settings.media_image_model || "")}"
+                placeholder="google/gemini-2.5-flash-image"></label>
+            <label class="field"><span class="lbl">Video model</span>
+              <input id="s-media_video_model" value="${esc(settings.media_video_model || "")}"
+                placeholder="google/veo-3.1"></label>
+            <label class="field"><span class="lbl">Vision model — reads pictures people post</span>
+              <input id="s-media_vision_model" value="${esc(settings.media_vision_model || "")}"
+                placeholder="${esc(settings.ai_model || "")}">
+              <span class="muted">Only used on messages that actually have an image attached,
+                and it answers that whole turn. Leave blank to use the chat model above.
+                Worth setting when that model can't read images.</span></label>
+            <label class="field"><span class="lbl">Videos per hour, server-wide (0 = no cap)</span>
+              <input id="s-media_video_hourly_cap" type="number" min="0" value="${settings.media_video_hourly_cap ?? 5}"></label>
+            <span class="muted">Every image and every clip is billed against this instance's
+              OpenRouter credit, and video costs far more than images — roughly ten times per
+              request. Leave the models blank to follow whatever this instance is configured
+              to use. Opening this to <strong>everyone</strong> hands the whole server a button
+              that spends real money, so the hourly video cap is the safety net.</span>
+          </div>
+        </section>
+
         <section class="settings-panel ${activeTab === "voice-detect" ? "active" : ""}" data-panel="voice-detect">
           <div class="section-title">Voice detection</div>
           <div class="card">
@@ -915,9 +948,13 @@ async function renderSettings() {
                 <option value="smart" ${settings.voice_detection_mode !== "wake_words" ? "selected" : ""}>Smart detection (recommended)</option>
                 <option value="wake_words" ${settings.voice_detection_mode === "wake_words" ? "selected" : ""}>Exact wake words only</option>
               </select></label>
-            <span class="muted">Smart detection spots ${esc(botLabel(settings))}'s name even when
-              transcription mangles it, then decides if it was addressed vs mentioned.
-              Wake words below still trigger instantly in either mode.</span>
+            <span class="muted">Smart detection runs a cheap classifier over what was said
+              to spot ${esc(botLabel(settings))}'s name even when the transcriber mangles it
+              ("hey aim ee"), then lets the main model read the conversation and work out
+              whether it was being <em>spoken to</em> or just <em>spoken about</em> — so
+              "I asked ${esc(botLabel(settings))} earlier" doesn't make it butt in. The
+              wake words below still trigger instantly in either mode. The classifier uses
+              the utility model, the same cheap one memory and de-escalation use.</span>
           </div>
         </section>
 
@@ -1078,6 +1115,12 @@ async function renderSettings() {
       ai_enabled: $("#s-ai_enabled").checked,
       ai_model: $("#s-ai_model").value.trim(),
       ai_utility_model: $("#s-ai_utility_model").value.trim(),
+      media_enabled: $("#s-media_enabled").checked,
+      media_access: $("#s-media_access").value,
+      media_image_model: $("#s-media_image_model").value.trim(),
+      media_video_model: $("#s-media_video_model").value.trim(),
+      media_vision_model: $("#s-media_vision_model").value.trim(),
+      media_video_hourly_cap: parseInt($("#s-media_video_hourly_cap").value, 10) || 0,
       pressure_enabled: $("#s-pressure_enabled").checked,
       deesc_enabled: $("#s-deesc_enabled").checked,
       deesc_harsh_language: $("#s-deesc_harsh_language").checked,

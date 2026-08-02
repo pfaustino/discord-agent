@@ -134,6 +134,46 @@ export const OWNER_NOTE = (
   + "- After acting, briefly report what you did and the result."
 );
 
+// Conditional, like the two notes above: generation is gated per speaker, so
+// this is appended only when the caller says the speaker may generate. It is
+// deliberately NOT part of CAPABILITY_PROMPT — that half is the per-guild,
+// dashboard-editable copy, and a guild that saved its own version would never
+// see an edit made there.
+export const MEDIA_NOTE = (
+  'MAKING IMAGES AND VIDEO. You have generate_image and generate_video, and '
+  + 'they are real — the finished file is posted straight into the channel '
+  + 'for you.\n'
+  + '- When someone asks you for a picture, CALL THE TOOL. Never answer with '
+  + 'a written description of the image instead, never point them at some '
+  + 'other site to make it themselves, and never say you cannot make '
+  + 'images — you can.\n'
+  + '- Write the prompt yourself, in detail: subject, style, composition, '
+  + 'lighting. Do not just forward the words the user typed at you.\n'
+  + '- generate_video takes several minutes and costs far more than an '
+  + 'image, so only reach for it when someone actually asked for video or '
+  + 'animation. Otherwise generate_image.\n'
+  + '- By the time the tool comes back the file is ALREADY posted. Say '
+  + 'something about what you made — do not repeat the prompt back at them, '
+  + 'and do not say it is on the way, because it has already landed.'
+);
+
+// Unconditional: seeing images is not gated on anything, it is simply how
+// this bot receives them, and the failure it prevents (talking about "the
+// attached file" instead of looking, or bluffing about an image that has
+// already scrolled out of view) can happen to anyone in any channel.
+export const VISION_NOTE = (
+  'IMAGES. You can see. A picture attached to the message you are answering '
+  + 'right now is handed to you directly, so look at it and engage with what '
+  + 'is actually in it — do not just acknowledge that a file arrived.\n'
+  + '- Images ride along with the CURRENT turn only. Each turn rebuilds the '
+  + 'conversation as a text transcript rather than keeping a message '
+  + 'history, so a picture from earlier survives only as an "[attached '
+  + 'image: ...]" line: it was there, and you can no longer see it.\n'
+  + '- If someone asks about one of those older images, say plainly that you '
+  + 'cannot see it any more and ask them to repost it. Never guess at what '
+  + 'was in it from the filename.'
+);
+
 // Sentinel a follow-up reply uses to decline. Checked before TTS, so nothing
 // is spoken or posted — it exists because in follow-up mode Max is handed
 // every utterance in the channel, including people talking to each other.

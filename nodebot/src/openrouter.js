@@ -66,6 +66,44 @@ const MAX_BACKOFF_MS = 8_000;
  * same round without tools. Internal — never escapes chat(). */
 class ToolUnsupportedError extends Error {}
 
+/** Signals "this model can't accept images" so the caller can re-run the
+ * same round with the image parts stripped. Internal — never escapes chat(). */
+class ImageUnsupportedError extends Error {}
+
+/** True when any message carries OpenAI-style multimodal content (an array of
+ * parts) rather than a plain string. */
+function hasImageParts(messages) {
+  return (messages || []).some((m) => Array.isArray(m?.content));
+}
+
+/**
+ * Flattens multimodal messages down to text: any message whose `content` is an
+ * array of parts becomes a plain string joining the `type === 'text'` parts,
+ * dropping everything else (images). Messages already holding a string — or
+ * null, as tool-calling assistant turns do — are passed through untouched.
+ *
+ * Nothing is mutated: new message objects are built and the input array is
+ * left alone, because the caller may still need the original to retry against
+ * a different model.
+ *
+ * @param {Array} messages
+ * @returns {{messages: Array, changed: boolean}} changed is false when there
+ *   was no multimodal content to strip — the signal that retrying is pointless.
+ */
+export function stripImageParts(messages) {
+  let changed = false;
+  const out = (messages || []).map((m) => {
+    if (!Array.isArray(m?.content)) return m;
+    changed = true;
+    const text = m.content
+      .filter((part) => part?.type === 'text')
+      .map((part) => part.text || '')
+      .join('\n');
+    return { ...m, content: text };
+  });
+  return { messages: out, changed };
+}
+
 /**
  * OpenRouter reports an upstream provider failure in TWO different shapes: a
  * real HTTP error, and — the one that actually bit us — HTTP 200 with an
@@ -145,6 +183,18 @@ async function requestCompletion(payload, signal, background) {
     if (payload.tools && [400, 404].includes(err.status)
         && err.message.toLowerCase().includes('tool')) {
       throw new ToolUnsupportedError(err.message);
+    }
+
+    // Same story for image input: most models are text-only (the whole free
+    // pool is) and reject a multimodal message outright rather than ignoring
+    // the picture. The caller retries with the image parts stripped. Gate on
+    // the payload actually carrying images — otherwise an unrelated failure
+    // whose message merely happens to say "image" would send us into a retry
+    // that changes nothing.
+    if ([400, 404, 415].includes(err.status)
+        && /image|vision|modalit|multimodal/i.test(err.message)
+        && hasImageParts(payload.messages)) {
+      throw new ImageUnsupportedError(err.message);
     }
 
     last = err;
@@ -267,6 +317,23 @@ export async function chat(messages, {
         console.warn(`[openrouter] model rejected tool use — retrying without tools (${err.message.slice(0, 120)})`);
         useTools = false;
         round -= 1; // retry this same round without tools
+        continue;
+      }
+      // Likewise for image input — losing the picture beats losing the reply.
+      if (err instanceof ImageUnsupportedError) {
+        const stripped = stripImageParts(conversation);
+        if (!stripped.changed) {
+          // Nothing to strip, so a retry would send the identical payload and
+          // fail identically. Surface it instead of spinning the round budget.
+          throw new OpenRouterError(
+            `OpenRouter rejected image input (${payload.model}): ${err.message}`,
+          );
+        }
+        console.warn(`[openrouter] model rejected image input — retrying without images (${err.message.slice(0, 120)})`);
+        // In place: `conversation` is the array later rounds keep pushing tool
+        // results onto, so it has to stay the same binding, not be rebound.
+        conversation.splice(0, conversation.length, ...stripped.messages);
+        round -= 1; // retry this same round text-only
         continue;
       }
       // Background work reroutes itself. Nobody is listening at 3am when
