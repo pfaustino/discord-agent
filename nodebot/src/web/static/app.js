@@ -947,7 +947,10 @@ async function renderSettings() {
             <label class="field"><span class="lbl">Stop listening (end the conversation)</span>
               <input id="s-voice_stop_listening_words" value="${esc(brackets(settings.voice_stop_listening_words))}"
                 placeholder="[{ai} stop listening] [{ai} go to sleep]"></label>
-            <span class="muted">Use <code>{ai}</code> for the bot's name. Each phrase in [brackets].</span>
+            <span class="muted">Put each phrase in its own [brackets]. Use <code>{ai}</code> as a
+              placeholder for the bot's name so wake words follow renames.
+              Say a wake word to pull the bot into the conversation; a cancel word right
+              after calls it off before he answers.</span>
           </div>
         </section>
 

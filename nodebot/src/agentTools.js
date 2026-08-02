@@ -339,6 +339,20 @@ async function deleteRole(client, message, args) {
 
 // -- AI backends ------------------------------------------------------------
 
+/* Two models are configured per server and people call the second one all
+   sorts of things out loud — "maintenance", "background", "upkeep", "the
+   cheap one". Spelling those out in the enum description is what makes
+   "switch the maintenance model to Haiku" land on role=utility instead of
+   silently changing the model that answers people. */
+const ROLE_ARG = {
+  type: 'string',
+  enum: ['chat', 'utility'],
+  description: 'chat = the model that writes replies (default). '
+    + 'utility = the background model, also called the maintenance, upkeep or '
+    + 'utility model — it runs memory consolidation, signal classification and '
+    + 'de-escalation.',
+};
+
 /** What she can switch to, and what each one would cost. */
 async function listBackends(client, message, args) {
   const role = args.role === 'utility' ? 'utility' : 'chat';
@@ -385,7 +399,15 @@ async function switchBackend(client, message, args) {
     if (!usable.length) throw new ToolError(`every model matching "${wanted}" is rate limited right now.`);
     target = usable[0].id;
   }
-  if (role === 'chat' && !catalog.get(target)?.supportsTools) {
+  // An exact id skips the filtered list above, so the capability checks have
+  // to happen here too — otherwise "switch the maintenance model to
+  // lyria-3-clip-preview" is accepted and every background call 502s after it.
+  const chosen = catalog.get(target);
+  if (chosen && !chosen.canChat) {
+    throw new ToolError(`${target} isn't a chat model — it can't answer in text at all. `
+      + 'Try list_ai_backends for what I can actually switch to.');
+  }
+  if (role === 'chat' && !chosen?.supportsTools) {
     throw new ToolError(`${target} can't do tool calling, so it would lose most of my abilities. `
       + 'Pick another, or set it on the dashboard if you really want it.');
   }
@@ -457,15 +479,16 @@ export const TOOLS = {
   delete_role: [schema('delete_role', 'Delete a role.', { role: str('Role name, mention, or ID') }, ['role']), deleteRole],
   list_ai_backends: [schema('list_ai_backends',
     'List which AI model this server is using and what it can switch to, with costs. '
-    + 'Use when asked what models are available or which one is in use.',
-    { role: { type: 'string', enum: ['chat', 'utility'], description: 'chat = replies (default); utility = background work' } }),
-    listBackends],
+    + 'Use when asked what models are available or which one is in use — for '
+    + 'replies, or for the background/maintenance/utility model.',
+    { role: ROLE_ARG }), listBackends],
   switch_ai_backend: [schema('switch_ai_backend',
     'Switch which AI model this server uses. Accepts an OpenRouter model id or a '
-    + 'spoken name like "haiku", or "back" to undo the last switch.',
+    + 'spoken name like "haiku", or "back" to undo the last switch. Works for the '
+    + 'reply model and for the background/maintenance/utility model — pass role.',
     {
       model: str('Model id, a name fragment like "haiku", or "back" to revert'),
-      role: { type: 'string', enum: ['chat', 'utility'], description: 'chat = replies (default); utility = background work' },
+      role: ROLE_ARG,
     }, ['model']), switchBackend],
 };
 

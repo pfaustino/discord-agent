@@ -47,9 +47,15 @@ export function expandPhraseTemplates(phrases, botName) {
   const seen = new Set();
   const out = [];
   for (const phrase of phrases || []) {
-    const expanded = normalizePhrase(
-      String(phrase).replace(/\{ai\}/gi, name || ''),
-    );
+    const raw = String(phrase);
+    // A name that normalizes away entirely — an all-emoji nickname, say —
+    // would turn "[hey {ai}]" into the bare phrase "hey". Matching is
+    // SUBSTRING based, so that wake word fires on "they said it was fine",
+    // and the bot interjects on ordinary conversation. Drop the template
+    // instead; voicePhrases() falls back to the shipped defaults if that
+    // empties the list.
+    if (!name && /\{ai\}/i.test(raw)) continue;
+    const expanded = normalizePhrase(raw.replace(/\{ai\}/gi, name));
     if (!expanded || seen.has(expanded)) continue;
     seen.add(expanded);
     out.push(expanded);

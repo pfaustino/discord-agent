@@ -87,14 +87,25 @@ const ENV_DEFAULTS = {
  * would silently rewrite wake words an admin deliberately chose.
  */
 export function voicePhrases(client, guildId, key) {
+  const name = botNameForPhrases(client, guildId);
   let list;
   if (db.hasSetting(guildId, key)) list = db.getSetting(guildId, key);
   else if (VOICE_PHRASES_FROM_ENV[key]) list = ENV_DEFAULTS[key];
   else {
     const derive = DERIVE[key];
-    const name = botNameForPhrases(client, guildId);
+    // A name that normalizes away entirely (all emoji, say) would derive
+    // nonsense like "hey " — keep the shipped default rather than break voice.
     if (!derive || !name) list = ENV_DEFAULTS[key];
     else list = derive(name);
   }
-  return expandPhraseTemplates(list, botNameForPhrases(client, guildId));
+  const expanded = expandPhraseTemplates(list, name);
+  // Everything in the list was an {ai} template and the name expanded to
+  // nothing, so it was all dropped. Same call as above: keep the shipped
+  // default rather than leave the guild with no wake words at all.
+  //
+  // Only when there was something to lose. A list someone explicitly emptied
+  // stays empty — that is a deliberate "no wake words here", not a failure to
+  // expand, and re-deriving over it would ignore what they asked for.
+  if (list.length && !expanded.length) return ENV_DEFAULTS[key];
+  return expanded;
 }

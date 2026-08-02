@@ -163,6 +163,16 @@ async function requestCompletion(payload, signal, background) {
   // and those need very different cooldowns.
   if (last.status === 429) {
     switching.markUnavailable(payload.model, { reason: last.message });
+  } else if (last.status >= 500) {
+    // An upstream failure. Usually transient, but it is also what a model
+    // that can never answer us looks like — asking a music generator for a
+    // chat completion returns 502 "Provider returned error", not a clean
+    // rejection. Park it briefly either way: a good model comes back in five
+    // minutes, and a fundamentally wrong one stops being picked every time.
+    switching.markUnavailable(payload.model, {
+      reason: `upstream ${last.status}`,
+      ms: switching.UPSTREAM_ERROR_COOLDOWN_MS,
+    });
   }
   const error = new OpenRouterError(
     `OpenRouter ${label} (${payload.model}${background ? ', background' : ''}): ${last.message}`,
@@ -268,7 +278,16 @@ export async function chat(messages, {
       // This call still fails: background gets exactly one shot by design, and
       // retrying it here would have it compete with the conversation for the
       // same rate limit. The NEXT background call picks up the new model.
-      if (background && err.status === 429 && guildId) {
+      //
+      // 5xx gets the same treatment as 429, and for a worse reason: parking
+      // the model is not enough on its own, because the background role reads
+      // its model from a stored setting rather than from the shortlist. A
+      // model that can never answer us — a music or image generator that
+      // rotation picked up before the catalog knew to exclude it — would
+      // otherwise return 502 on every background call for the life of the
+      // install. Rotating rewrites the setting, so the next call goes
+      // somewhere else.
+      if (background && guildId && (err.status === 429 || err.status >= 500)) {
         switching.rotateBackground(guildId);
       }
       throw err;

@@ -109,6 +109,7 @@ CREATE TABLE IF NOT EXISTS model_catalog (
     prompt_price     REAL,
     completion_price REAL,
     supports_tools   INTEGER NOT NULL DEFAULT 0,
+    can_chat         INTEGER NOT NULL DEFAULT 0,
     fetched_at       INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_warnings_guild_user ON warnings (guild_id, user_id);
@@ -253,7 +254,35 @@ export function initDb(path = 'nodebot.db') {
   db = handle;
   db.exec(SCHEMA);
   db.exec(PLATFORM_SCHEMA);
+  refreshModelCatalogShape();
   return db;
+}
+
+/**
+ * Drop the model catalog when its columns are out of date.
+ *
+ * It is a pure cache of OpenRouter's model list, refetched every hour, so
+ * throwing it away costs nothing and rebuilding it is automatic. That is much
+ * safer than an ALTER TABLE dance: a column added with a DEFAULT would leave
+ * every cached row claiming the default, and `can_chat` defaulting to 0 would
+ * silently empty the fallback list on an existing deployment while
+ * `can_chat` defaulting to 1 would keep routing to music generators.
+ */
+function refreshModelCatalogShape() {
+  let columns;
+  try {
+    columns = db.prepare("SELECT name FROM pragma_table_info('model_catalog')").all();
+  } catch {
+    return; // no such table yet — the schema above just created it
+  }
+  if (!columns.length) return;
+  const names = new Set(columns.map((c) => c.name));
+  const expected = ['id', 'name', 'context_length', 'prompt_price',
+    'completion_price', 'supports_tools', 'can_chat', 'fetched_at'];
+  if (expected.every((c) => names.has(c))) return;
+  console.log('[db] model catalog shape changed — dropping the cache to rebuild');
+  db.exec('DROP TABLE model_catalog');
+  db.exec(SCHEMA);
 }
 
 export function closeDb() {

@@ -55,6 +55,10 @@ export const DEFAULT_COOLDOWN_MS = 15 * 60_000;
 /** A daily quota (OpenRouter's free pool) will not lift in fifteen minutes.
  *  Park those until tomorrow instead of thrashing against them all day. */
 export const DAILY_QUOTA_COOLDOWN_MS = 6 * 3600_000;
+/** An upstream 5xx. Might be a blip on a good model, might be a model that
+ *  can never answer us — park it briefly either way so the next call goes
+ *  somewhere else instead of hammering the same broken provider. */
+export const UPSTREAM_ERROR_COOLDOWN_MS = 5 * 60_000;
 
 const cooling = new Map(); // modelId → { until, reason }
 
@@ -207,6 +211,56 @@ export function rotateBackground(guildId, { nowMs = Date.now() } = {}) {
   const result = switchTo(guildId, 'utility', options[0].id);
   console.warn(`[backends] background work rerouted to ${options[0].id} (${options[0].label})`);
   return { ...result, option: options[0] };
+}
+
+/**
+ * Drop any stored model the catalog says can never answer us.
+ *
+ * Rotation writes its pick to a setting, so one bad choice outlives the call
+ * that made it: before the catalog knew to exclude non-chat models, background
+ * work could land on a music generator and return 502 on every call from then
+ * on. The failure path recovers from that, but only after burning a call — and
+ * it is worth not burning it, because this is knowable in advance.
+ *
+ * Only acts when the catalog *positively* says the model cannot chat. A model
+ * that is simply absent from the catalog is left alone: a hand-set id that
+ * OpenRouter does not list is a deliberate choice, not a mistake to correct.
+ */
+export function evictUnusable({ nowMs = Date.now() } = {}) {
+  let rows;
+  try {
+    rows = db.getDb().prepare(`
+      SELECT guild_id, key, value FROM guild_settings
+       WHERE key IN ('ai_model', 'ai_utility_model')
+    `).all();
+  } catch {
+    return []; // no database — nothing stored, nothing to evict
+  }
+
+  const evicted = [];
+  for (const raw of rows) {
+    // Settings are stored JSON-encoded, so the column holds `"vendor/model"`
+    // rather than the bare id.
+    let value;
+    try { value = JSON.parse(raw.value); } catch { continue; }
+    const row = { ...raw, value };
+    const entry = catalog.get(row.value);
+    if (!entry || entry.canChat) continue;
+    const role = row.key === 'ai_model' ? 'chat' : 'utility';
+    console.warn(`[backends] ${row.value} cannot hold a text conversation — `
+      + `dropping it as the ${role} model for guild ${row.guild_id}`);
+    // Park it too, so the shortlist cannot immediately hand it back. This one
+    // is not a rate limit that lifts — nothing about it will be different in
+    // an hour — so it is parked for the day rather than for minutes.
+    markUnavailable(row.value, { reason: 'not a chat model', nowMs, ms: 24 * 3600_000 });
+    const options = shortlist(row.guild_id, role, { nowMs, limit: 1 });
+    if (!options.length) {
+      console.warn(`[backends] no usable ${role} model to replace ${row.value} with`);
+      continue;
+    }
+    evicted.push({ guildId: row.guild_id, role, ...switchTo(row.guild_id, role, options[0].id) });
+  }
+  return evicted;
 }
 
 /* ── The offer ────────────────────────────────────────────────────────────── */

@@ -123,3 +123,23 @@ test('{ai} placeholder is preserved when parsing and expands to the bot name', (
   ]);
   assert.equal(matchesAny('Hey Helena, you around?', expandPhraseTemplates(['{ai} you around'], 'Helena')), true);
 });
+
+test('an {ai} template is dropped rather than left as a bare stub', () => {
+  // A name that normalizes away entirely (an all-emoji nickname) used to turn
+  // "[hey {ai}]" into the wake word "hey". Matching is substring based, so
+  // that fires on "they said it was fine" and the bot interjects on ordinary
+  // conversation — much worse than the phrase simply not being installed.
+  for (const name of ['', null, '🤖🤖']) {
+    const expanded = expandPhraseTemplates(['hey {ai}', '{ai} you around'], name);
+    assert.deepEqual(expanded, [], `name ${JSON.stringify(name)} should drop the templates`);
+  }
+  const degenerate = expandPhraseTemplates(['hey {ai}'], '🤖');
+  assert.equal(matchesAny('they said it was fine', degenerate), false);
+  assert.equal(matchesAny('hey guys what is up', degenerate), false);
+});
+
+test('phrases without {ai} are unaffected by a nameless bot', () => {
+  // Only the templates are at risk — a literal phrase is still perfectly good.
+  const list = expandPhraseTemplates(['never mind', 'hey {ai}'], '');
+  assert.deepEqual(list, ['never mind']);
+});
