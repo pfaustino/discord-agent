@@ -45,6 +45,16 @@ const STATIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'stat
 const SITE_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '../../../site');
 const DASHBOARD_ACTOR = 'Dashboard';
 
+/* Short URLs for the two pages Discord requires in the application's settings.
+   Both spellings are served so a link written either way keeps working — these
+   end up pasted into places nobody will revisit. */
+const LEGAL_PAGES = {
+  '/privacy': 'privacy.html',
+  '/privacy-policy': 'privacy.html',
+  '/terms': 'terms.html',
+  '/tos': 'terms.html',
+};
+
 const CONTENT_TYPES = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
@@ -809,6 +819,18 @@ export function createDashboard(client) {
       if (req.method === 'GET' && pathname.startsWith('/site/')) {
         const rest = pathname.slice('/site/'.length) || 'index.html';
         await serveStatic(res, rest, { dir: SITE_DIR, cacheControl: 'no-cache' });
+        return;
+      }
+
+      // The legal pages get short, stable URLs of their own rather than living
+      // under /site/. These go into Discord's application settings and into
+      // other people's bookmarks, and a URL with "/site/" and ".html" in it is
+      // one that cannot be reorganised later without breaking them. Cached for
+      // an hour: they change rarely, and Discord fetches them for review.
+      if (req.method === 'GET' && LEGAL_PAGES[pathname]) {
+        await serveStatic(res, LEGAL_PAGES[pathname], {
+          dir: SITE_DIR, cacheControl: 'public, max-age=3600',
+        });
         return;
       }
 
