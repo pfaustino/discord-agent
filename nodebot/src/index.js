@@ -10,6 +10,8 @@ import * as memory from './memory.js';
 import * as proactive from './proactive.js';
 import * as logbuffer from './logbuffer.js';
 import { startDashboard, applyPresence } from './web/server.js';
+import * as backendCatalog from './backends/catalog.js';
+import * as backendSwitching from './backends/switching.js';
 import * as db from './db.js';
 
 if (!DISCORD_TOKEN) {
@@ -63,6 +65,13 @@ client.once(Events.ClientReady, (c) => {
   proactive.startTicker(c);
   applyPresence(c);
   startDashboard(c);
+  // Keep the list of available OpenRouter models fresh, so there is something
+  // to reroute to the moment a backend starts refusing rather than an hour
+  // after. Fetches once now if the cache is empty; hourly after that. Each
+  // refresh is followed by a check that the models she is actually pointed at
+  // are still ones that can answer — a rotation made before the catalog knew
+  // better could have left her on something that only ever returns 502.
+  backendCatalog.startRefreshing({ afterRefresh: () => backendSwitching.evictUnusable() });
 });
 
 client.on(Events.InteractionCreate, async (interaction) => {

@@ -104,6 +104,10 @@ test('every tool the capability prompt names actually exists', () => {
   const named = CAPABILITY_PROMPT.match(
     /\b(?:kb|github|repo|sandbox)_[a-z_]+|\bweb_search\b|\brecall_chat_log\b/g,
   ) || [];
+  // Tools whose names don't fit the prefix conventions above still have to be
+  // real — the point of this test is that nothing in the prompt is a promise
+  // the bot can't keep, whatever the tool happens to be called.
+  named.push(...(CAPABILITY_PROMPT.match(/\b(?:list|switch)_ai_backends?\b/g) || []));
   assert.ok(named.length > 5, 'expected the prompt to name real tools');
   for (const name of new Set(named)) {
     assert.ok(REAL_TOOLS.has(name), `capability prompt claims a tool that does not exist: ${name}`);

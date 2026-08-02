@@ -1,11 +1,18 @@
 /* The platform model: venues, credit pricing, provisioning state, and the
-   demo store the onboarding form, customer dashboard and admin queue all
+   API client the onboarding form, customer dashboard and staff queue all
    share.
 
-   Everything here is the front-end's view of what the backend will own. The
-   shapes match docs/platform-spec.md one-for-one, so swapping localStorage for
-   real API calls is a change to `Store` alone — no screen touches storage
-   directly. */
+   Every screen goes through `API` and no screen calls fetch directly, which
+   is the same containment the demo store had — it is just talking to the bot
+   now instead of to localStorage.
+
+   The pricing and pipeline constants below are a COPY of what the backend
+   owns (`nodebot/src/credits/rates.js` and `nodebot/src/platform/`). They
+   exist so the marketing pages render instantly and still render with the
+   backend down. `API.catalog()` overwrites them with the live values on load,
+   and nodebot's test suite fails if the two ever disagree — a price shown
+   here that is not the price charged is the worst kind of bug to hear about
+   from a customer. */
 
 /* ── Service venues ─────────────────────────────────────────────────────── */
 
@@ -20,7 +27,7 @@ const VENUES = [
       + 'to sign up for elsewhere, and no provider bill of your own.',
     forWho: 'Almost everyone. Communities, servers, small teams.',
     billing: 'Subscription tier + usage credits',
-    setup: 'Automated — minutes',
+    setup: 'We build it with you — a session, not a signup form',
   },
   {
     id: 'enterprise',
@@ -28,8 +35,8 @@ const VENUES = [
     tagline: 'Your provider accounts. We run the platform.',
     detail:
       'You hold the provider contracts and the spend sits on your own accounts. '
-      + 'We handle provisioning, the dashboard, upgrades and support. Usage is '
-      + 'reported back to you but never billed by us.',
+      + 'We handle provisioning, the dashboard, upgrades and support, including '
+      + 'the install. Usage is reported back to you but never billed by us.',
     forWho: 'Orgs with procurement, existing provider contracts, or data rules.',
     billing: 'Flat platform fee per server',
     setup: 'Assisted — key handover and a call',
@@ -46,7 +53,7 @@ const VENUES = [
    it yet. It is shown greyed rather than hidden, because the honest answer to
    "do you support ElevenLabs" is "priced, not wired up". */
 
-const CREDIT_RATES = [
+let CREDIT_RATES = [
   {
     id: 'reply-standard',
     provider: 'OpenRouter',
@@ -104,8 +111,12 @@ const CREDIT_RATES = [
 ];
 
 /* Top-up packs. Bigger packs are cheaper per credit; that discount is the
-   only lever that makes prepayment worth anything to the customer. */
-const CREDIT_PACKS = [
+   only lever that makes prepayment worth anything to the customer.
+
+   There is no checkout behind these yet. They are the price list we quote
+   from: you pay us however we agreed, and we put the credits on the account
+   against that payment reference. */
+let CREDIT_PACKS = [
   { id: 'pack-10', credits: 5000, price: 10 },
   { id: 'pack-50', credits: 30000, price: 50, popular: true },
   { id: 'pack-100', credits: 75000, price: 100 },
@@ -121,214 +132,165 @@ function packSavingPct(pack) {
 
 /* ── Provisioning ──────────────────────────────────────────────────────────
 
-   A submitted request walks this pipeline. `auto: true` steps run without a
-   human; the rest land in the admin queue. This is the honest shape of "some
-   of it is automated, and then we manage what gets selected". */
+   A submitted order walks this pipeline. `auto: true` steps run without a
+   human. Everything from review on is moved by a person — that is not a gap,
+   it is the product: somebody here sits down with the customer and builds the
+   bot with them. */
 
-const PIPELINE = [
+let PIPELINE = [
   {
     id: 'submitted',
     name: 'Submitted',
     auto: true,
-    detail: 'Form received, plan and modules recorded.',
+    detail: 'Order received, plan and capabilities recorded.',
   },
   {
     id: 'validated',
     name: 'Validated',
     auto: true,
-    detail: 'Module set checked against the tier; conflicts and impossible combinations rejected.',
+    detail: 'Capability set checked against the tier; impossible combinations rejected.',
   },
   {
     id: 'review',
     name: 'Review',
     auto: false,
-    detail: 'A human confirms what gets switched on. Enterprise key handover happens here.',
+    detail: 'We get in a room with you and build it out together. '
+      + 'Enterprise key handover happens here.',
   },
   {
     id: 'provisioning',
     name: 'Provisioning',
-    auto: true,
-    detail: 'Discord application registered, token minted, database and volume allocated.',
+    auto: false,
+    detail: 'Discord application registered, token minted, settings written.',
   },
   {
     id: 'ready',
     name: 'Ready',
-    auto: true,
+    auto: false,
     detail: 'Invite link issued and dashboard access granted.',
   },
 ];
 
-const PIPELINE_INDEX = Object.fromEntries(PIPELINE.map((s, i) => [s.id, i]));
+let PIPELINE_INDEX = Object.fromEntries(PIPELINE.map((s, i) => [s.id, i]));
 
-/** Which requests need a human, and why. Drives the admin queue's filter. */
+/** Which orders need a human, and why. Drives the staff queue's filter. */
 function needsHuman(request) {
+  if (request.stage === 'rejected' || request.stage === 'ready') return null;
   if (request.venue === 'enterprise') return 'Key handover and contract';
-  if (request.stage === 'review') return 'Module set confirmation';
-  return null;
+  if (request.stage === 'review') return 'Capability set confirmation';
+  if (request.stage === 'validated') return 'Ready to schedule the build session';
+  if (request.stage === 'submitted') return 'Capability set does not validate';
+  return 'Provisioning in progress';
 }
 
-/* ── Demo store ────────────────────────────────────────────────────────────
+/* ── API client ─────────────────────────────────────────────────────────────
 
-   localStorage standing in for the backend. Every screen goes through here,
-   so replacing it with fetch() calls is a single-file change. Seeded on first
-   run so the dashboard and admin queue have something to show. */
+   The bot serves both this site and these endpoints, so requests are
+   same-origin and the session cookie rides along on its own. */
 
-const STORE_KEY = 'max-platform-v1';
+class ApiError extends Error {
+  constructor(status, detail) {
+    super(detail || `Request failed (${status})`);
+    this.status = status;
+    this.detail = detail;
+  }
+}
 
-const Store = {
-  read() {
-    try {
-      const raw = localStorage.getItem(STORE_KEY);
-      if (raw) return JSON.parse(raw);
-    } catch (e) { /* corrupt draft is not worth failing over */ }
-    const seeded = seed();
-    Store.write(seeded);
-    return seeded;
-  },
+async function request(method, path, body) {
+  let res;
+  try {
+    res = await fetch(path, {
+      method,
+      headers: body ? { 'Content-Type': 'application/json' } : {},
+      body: body ? JSON.stringify(body) : undefined,
+      credentials: 'same-origin',
+    });
+  } catch (err) {
+    // The site can be opened straight off the filesystem, where there is no
+    // backend at all. Saying so beats a stack trace in the console.
+    throw new ApiError(0, 'Could not reach the server.');
+  }
+  let data = null;
+  try { data = await res.json(); } catch (err) { /* empty body is fine */ }
+  if (!res.ok) throw new ApiError(res.status, data && data.detail);
+  return data;
+}
 
-  write(data) {
-    try { localStorage.setItem(STORE_KEY, JSON.stringify(data)); } catch (e) {}
+const API = {
+  ApiError,
+
+  /** Live pricing, tiers and pipeline. Overwrites the static copies above so
+   *  every screen renders the real numbers once this resolves. */
+  async catalog() {
+    const data = await request('GET', '/api/platform/catalog');
+    if (data.rates) CREDIT_RATES = data.rates;
+    if (data.packs) CREDIT_PACKS = data.packs;
+    if (data.stages) {
+      PIPELINE = data.stages;
+      PIPELINE_INDEX = Object.fromEntries(PIPELINE.map((s, i) => [s.id, i]));
+    }
     return data;
   },
 
-  update(fn) {
-    const data = Store.read();
-    fn(data);
-    return Store.write(data);
+  signUp: (payload) => request('POST', '/api/platform/signup', payload),
+  signIn: (email, password) => request('POST', '/api/platform/signin', { email, password }),
+  signOut: () => request('POST', '/api/platform/signout', {}),
+
+  /** The signed-in account with its servers and balance, or null. */
+  async me() {
+    try {
+      return await request('GET', '/api/platform/me');
+    } catch (err) {
+      if (err.status === 401) return null;
+      throw err;
+    }
   },
 
-  reset() {
-    try { localStorage.removeItem(STORE_KEY); } catch (e) {}
-    return Store.read();
-  },
+  usage: (days = 30) => request('GET', `/api/platform/usage?days=${days}`),
+  grants: () => request('GET', '/api/platform/grants'),
+  myOrders: () => request('GET', '/api/platform/orders'),
+  setAutoTopUp: (config) => request('PUT', '/api/platform/autotopup', config),
+
+  submitOrder: (order) => request('POST', '/api/platform/orders', order),
+  validateOrder: (tier, modules) => request('POST', '/api/platform/orders/validate', { tier, modules }),
+
+  /* staff */
+  queue: (stage) => request('GET', `/api/platform/admin/requests${stage ? `?stage=${stage}` : ''}`),
+  updateRequest: (id, patch) => request('PUT', `/api/platform/admin/requests/${id}`, patch),
+  advance: (id, stage) => request('POST', `/api/platform/admin/requests/${id}/advance`, { stage }),
+  approve: (id, accountId) => request('POST', `/api/platform/admin/requests/${id}/approve`, { accountId }),
+  accounts: () => request('GET', '/api/platform/admin/accounts'),
+  account: (id) => request('GET', `/api/platform/admin/accounts/${id}`),
+  issueCredits: (id, payload) => request('POST', `/api/platform/admin/accounts/${id}/credits`, payload),
+  attachGuild: (serverId, guildId) => request('POST', `/api/platform/admin/servers/${serverId}/guild`, { guildId }),
+  setServerStatus: (serverId, status) => request('POST', `/api/platform/admin/servers/${serverId}/status`, { status }),
 };
 
-/** Deterministic ids — no Date.now() collisions across a fast double-submit. */
-let idCounter = 0;
-function newId(prefix) {
-  idCounter += 1;
-  const stamp = Date.now().toString(36);
-  return `${prefix}_${stamp}${idCounter.toString(36)}`;
-}
+/* ── Derived numbers ────────────────────────────────────────────────────── */
 
-function seed() {
-  const now = Date.now();
-  const day = 86400000;
-  return {
-    account: {
-      id: 'acct_demo',
-      name: 'Northwind Collective',
-      email: 'ops@northwind.example',
-      venue: 'managed',
-      tier: 'voice',
-      credits: 41850,
-      autoTopUp: { enabled: true, threshold: 5000, packId: 'pack-50' },
-      createdAt: now - day * 47,
-    },
-    servers: [
-      {
-        id: 'srv_1', name: 'Northwind HQ', members: 2840, botName: 'Max',
-        accent: 'blurple', status: 'ready', tier: 'voice',
-        modules: ['mod-commands', 'roles-channels', 'automod', 'welcome', 'chat',
-          'persona', 'documents', 'voice-join', 'transcription', 'tts'],
-        creditsThisPeriod: 18420, provisionedAt: now - day * 40,
-      },
-      {
-        id: 'srv_2', name: 'Northwind Dev', members: 190, botName: 'Maxine',
-        accent: 'tide', status: 'ready', tier: 'core',
-        modules: ['mod-commands', 'automod', 'chat', 'persona', 'search', 'repo-analysis'],
-        creditsThisPeriod: 3110, provisionedAt: now - day * 22,
-      },
-      {
-        id: 'srv_3', name: 'Northwind Community', members: 11500, botName: 'Max',
-        accent: 'ember', status: 'provisioning', tier: 'voice',
-        modules: ['mod-commands', 'automod', 'welcome', 'chat', 'voice-join', 'tts'],
-        creditsThisPeriod: 0, provisionedAt: null,
-      },
-    ],
-    /* 30 days of usage, newest last. Shaped rather than random so the burn-rate
-       and projection maths have something realistic to chew on. */
-    usage: buildUsage(now, day),
-    requests: [
-      {
-        id: 'req_seed1', venue: 'managed', accountName: 'Harbour Guild',
-        email: 'admin@harbour.example', serverName: 'Harbour Guild',
-        botName: 'Skipper', tier: 'core', stage: 'review',
-        modules: ['mod-commands', 'automod', 'welcome', 'chat', 'persona', 'documents'],
-        submittedAt: now - 3600000 * 5, notes: '',
-      },
-      {
-        id: 'req_seed2', venue: 'enterprise', accountName: 'Meridian Labs',
-        email: 'it@meridian.example', serverName: 'Meridian Internal',
-        botName: 'Atlas', tier: 'autonomy', stage: 'review',
-        modules: ['mod-commands', 'roles-channels', 'automod', 'chat', 'persona',
-          'documents', 'search', 'repo-analysis', 'repo-review', 'knowledge',
-          'voice-join', 'transcription', 'tts', 'pressure'],
-        keys: { openrouter: 'pending', transcription: 'pending', fish: 'not-supplied' },
-        submittedAt: now - 3600000 * 30, notes: 'Wants SSO. Legal reviewing DPA.',
-      },
-      {
-        id: 'req_seed3', venue: 'managed', accountName: 'Pixel Pals',
-        email: 'mod@pixelpals.example', serverName: 'Pixel Pals',
-        botName: 'Pip', tier: 'hobby', stage: 'ready',
-        modules: ['mod-commands', 'automod', 'chat'],
-        submittedAt: now - 3600000 * 52, notes: '',
-      },
-    ],
-  };
-}
-
-function buildUsage(now, day) {
-  const out = [];
-  for (let i = 29; i >= 0; i -= 1) {
-    const weekday = new Date(now - day * i).getDay();
-    const quiet = weekday === 0 || weekday === 6;
-    const base = quiet ? 380 : 760;
-    // A deterministic wobble, so the chart looks alive without Math.random()
-    // producing a different history on every page load.
-    const wobble = ((i * 37) % 23) / 23;
-    out.push({
-      day: now - day * i,
-      replies: Math.round(base * (0.75 + wobble * 0.5)),
-      background: Math.round(base * 3.1 * (0.8 + wobble * 0.4)),
-      voiceMinutes: Math.round((quiet ? 9 : 26) * (0.6 + wobble * 0.8)),
-    });
-  }
-  return out;
-}
-
-/** Credits consumed by one day's usage row, per the rate card. */
-function creditsForDay(row) {
-  const rate = (id) => CREDIT_RATES.find((r) => r.id === id).credits;
-  return row.replies * rate('reply-standard')
-    + row.background * rate('background')
-    + row.voiceMinutes * (rate('transcription') + rate('tts-fish'));
-}
-
-/** Mean daily spend over the last `days` days. */
-function burnRate(usage, days = 7) {
-  const window = usage.slice(-days);
-  if (!window.length) return 0;
-  return window.reduce((sum, row) => sum + creditsForDay(row), 0) / window.length;
+/** Mean daily spend over the last `days` days of a usage rollup. */
+function burnRate(daily, days = 7) {
+  if (!daily || !daily.length) return 0;
+  const window = daily.slice(-days);
+  return window.reduce((sum, row) => sum + (row.credits || 0), 0) / window.length;
 }
 
 /** Whole days of balance left at the current burn rate. Infinity if idle. */
-function daysRemaining(credits, usage) {
-  const rate = burnRate(usage);
+function daysRemaining(credits, daily) {
+  const rate = burnRate(daily);
   if (rate <= 0) return Infinity;
   return Math.floor(credits / rate);
 }
 
-/** Credits grouped by provider over a window, for the usage breakdown. */
-function usageByProvider(usage, days = 30) {
-  const window = usage.slice(-days);
-  const totals = { OpenRouter: 0, 'OpenAI / Groq': 0, 'Fish Audio': 0 };
-  const rate = (id) => CREDIT_RATES.find((r) => r.id === id).credits;
-  for (const row of window) {
-    totals.OpenRouter += row.replies * rate('reply-standard')
-      + row.background * rate('background');
-    totals['OpenAI / Groq'] += row.voiceMinutes * rate('transcription');
-    totals['Fish Audio'] += row.voiceMinutes * rate('tts-fish');
+/** Credits grouped by provider, for the usage breakdown. Takes the `byKind`
+ *  rollup the API returns and folds it up through the rate card, so a new
+ *  billable line appears here without this function knowing about it. */
+function usageByProvider(byKind) {
+  const totals = {};
+  for (const row of byKind || []) {
+    const rate = CREDIT_RATES.find((r) => r.id === row.kind);
+    const name = rate ? rate.provider : 'Other';
+    totals[name] = (totals[name] || 0) + row.credits;
   }
   return totals;
 }
@@ -340,6 +302,7 @@ const fmt = {
   when: (ts) => {
     if (!ts) return '—';
     const mins = Math.round((Date.now() - ts) / 60000);
+    if (mins < 1) return 'just now';
     if (mins < 60) return `${mins}m ago`;
     const hours = Math.round(mins / 60);
     if (hours < 48) return `${hours}h ago`;
@@ -349,15 +312,13 @@ const fmt = {
 
 window.PLATFORM = {
   VENUES,
-  CREDIT_RATES,
-  CREDIT_PACKS,
-  PIPELINE,
-  PIPELINE_INDEX,
+  get CREDIT_RATES() { return CREDIT_RATES; },
+  get CREDIT_PACKS() { return CREDIT_PACKS; },
+  get PIPELINE() { return PIPELINE; },
+  get PIPELINE_INDEX() { return PIPELINE_INDEX; },
   packSavingPct,
   needsHuman,
-  Store,
-  newId,
-  creditsForDay,
+  API,
   burnRate,
   daysRemaining,
   usageByProvider,

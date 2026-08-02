@@ -21,7 +21,6 @@
     </nav>
     <div class="nav__cta">
       <span class="pill pill--warn">Internal</span>
-      <button class="btn btn--ghost btn--sm" data-reset>Reset demo data</button>
       <button class="nav__burger" id="burger" aria-label="Menu" aria-expanded="false" aria-controls="nav-links">
         <svg width="18" height="14" viewBox="0 0 18 14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M1 1h16M1 7h16M1 13h16"/></svg>
       </button>
@@ -30,6 +29,13 @@
 </header>
 
 <main class="wrap" style="padding-bottom:80px">
+
+  <!-- Shown instead of the console when there is no staff session. -->
+  <div data-gate hidden></div>
+
+  <div data-console hidden>
+
+  <div data-flash></div>
 
   <div class="appbar">
     <div>
@@ -87,8 +93,8 @@
       <div class="card2__head"><h3>Pipeline</h3><span class="aside" data-detail-stage></span></div>
       <div class="pipe" data-detail-pipe></div>
       <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:20px;padding-top:18px;border-top:1px solid var(--border)">
-        <button class="btn btn--primary" data-advance>Approve &amp; provision</button>
-        <button class="btn btn--ghost" data-hold>Send back to review</button>
+        <button class="btn btn--primary" data-advance>Move on</button>
+        <button class="btn btn--ghost" data-hold>Reject</button>
         <span class="hint" style="align-self:center" data-advance-note></span>
       </div>
     </div>
@@ -119,10 +125,73 @@
     </div>
   </section>
 
-  <div class="notice" style="margin-top:26px;border-color:rgba(88,101,242,.3);background:rgba(88,101,242,.07);color:#c7cbff">
-    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="flex-shrink:0;margin-top:2px"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 7.5v.5"/></svg>
-    <span>Showcase queue — requests live in your browser and nothing is really provisioned. In production this screen is behind staff auth, which is the first thing to build before it goes anywhere near a real domain.</span>
-  </div>
+  <!-- ===== ACCOUNTS & CREDIT ===== -->
+  <section style="margin-top:34px">
+    <div class="split-head">
+      <h2>Accounts</h2>
+      <span class="aside">Balances are live — this is what the bots draw on</span>
+    </div>
+    <div class="dtable-wrap">
+      <div class="dtable-scroll">
+        <table class="dtable" data-accounts></table>
+      </div>
+    </div>
+  </section>
+
+  <section data-account-detail hidden style="margin-top:22px">
+    <div class="split-head">
+      <h2 data-account-title>—</h2>
+      <span class="aside" data-account-sub></span>
+    </div>
+
+    <div class="grid-2" style="margin-bottom:18px">
+      <div class="card2">
+        <div class="card2__head">
+          <h3>Bots</h3>
+          <span class="aside">attaching a Discord server starts billing</span>
+        </div>
+        <div data-account-servers></div>
+      </div>
+      <div class="card2">
+        <div class="card2__head"><h3>Credit issued</h3></div>
+        <div data-grants></div>
+      </div>
+    </div>
+
+    <div class="card2">
+      <div class="card2__head">
+        <h3>Issue credit</h3>
+        <span class="aside">against a payment already taken</span>
+      </div>
+      <p class="dim" style="margin-bottom:16px">There is no card processing here. The
+        customer pays us however we agreed; this records it and puts the credits on
+        their balance immediately. The reference is required — an issued credit with
+        nothing behind it is indistinguishable from a mistake.</p>
+      <div class="grid-2">
+        <div class="field">
+          <label for="issue-pack">Pack</label>
+          <select class="select" id="issue-pack" data-issue-pack></select>
+        </div>
+        <div class="field">
+          <label for="issue-amount">Custom amount (credits)</label>
+          <input class="input" id="issue-amount" type="number" min="1" step="1"
+                 data-issue-amount placeholder="only if no pack picked">
+        </div>
+        <div class="field">
+          <label for="issue-ref">Payment reference</label>
+          <input class="input" id="issue-ref" type="text" data-issue-reference
+                 placeholder="invoice no, transfer id, …">
+        </div>
+        <div class="field">
+          <label for="issue-note">Note (optional)</label>
+          <input class="input" id="issue-note" type="text" data-issue-note placeholder="context">
+        </div>
+      </div>
+      <button class="btn btn--primary" style="margin-top:8px" data-issue>Issue credit</button>
+    </div>
+  </section>
+
+  </div><!-- /data-console -->
 </main>
 
 <footer class="footer" style="margin-top:0">

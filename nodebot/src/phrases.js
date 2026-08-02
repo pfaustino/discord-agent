@@ -22,9 +22,50 @@ export const PHRASE_LIST_KEYS = new Set([
   'voice_stop_listening_words',
 ]);
 
+/** Placeholder in bracket phrases that expands to the bot's name at runtime.
+ * Write [hey {ai}] in the dashboard — it matches "hey helena" when the bot is
+ * Helena, and still works after a rename without re-saving wake words. */
+export const AI_NAME_PLACEHOLDER = '{ai}';
+
+/** Internal marker that survives normalizePhrase while {ai} is parsed. */
+const AI_MARKER = '00botname00';
+
+function preserveAiPlaceholder(text) {
+  return String(text).replace(/\{ai\}/gi, AI_MARKER);
+}
+
+function restoreAiPlaceholder(text) {
+  return String(text).replaceAll(AI_MARKER, AI_NAME_PLACEHOLDER);
+}
+
 /**
- * Canonical form for matching: lowercased, with every run of non-alphanumeric
- * characters collapsed to a single space.
+ * Expand {ai} in stored phrase templates to the bot's current name, then
+ * normalize for matching. Safe to call on already-expanded lists (no {ai} left).
+ */
+export function expandPhraseTemplates(phrases, botName) {
+  const name = normalizePhrase(botName);
+  const seen = new Set();
+  const out = [];
+  for (const phrase of phrases || []) {
+    const raw = String(phrase);
+    // A name that normalizes away entirely — an all-emoji nickname, say —
+    // would turn "[hey {ai}]" into the bare phrase "hey". Matching is
+    // SUBSTRING based, so that wake word fires on "they said it was fine",
+    // and the bot interjects on ordinary conversation. Drop the template
+    // instead; voicePhrases() falls back to the shipped defaults if that
+    // empties the list.
+    if (!name && /\{ai\}/i.test(raw)) continue;
+    const expanded = normalizePhrase(raw.replace(/\{ai\}/gi, name));
+    if (!expanded || seen.has(expanded)) continue;
+    seen.add(expanded);
+    out.push(expanded);
+  }
+  return out;
+}
+
+/**
+ * Normalize a phrase for fuzzy matching: lowercased, punctuation and other
+ * non-alphanumeric characters collapsed to a single space.
  *
  * Applied to BOTH sides of a comparison — the live transcript and the stored
  * phrase. Doing it to only the transcript (which is what voice.js used to do)
@@ -79,7 +120,9 @@ export function parsePhraseList(input) {
   const seen = new Set();
   const out = [];
   for (const phrase of raw) {
-    const normalized = normalizePhrase(phrase);
+    const normalized = restoreAiPlaceholder(
+      normalizePhrase(preserveAiPlaceholder(phrase)),
+    );
     if (!normalized || seen.has(normalized)) continue;
     seen.add(normalized);
     out.push(normalized);

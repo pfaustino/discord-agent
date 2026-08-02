@@ -13,6 +13,8 @@
 import { ChannelType, PermissionFlagsBits } from 'discord.js';
 import * as db from './db.js';
 import { isOwner, logAction } from './utils.js';
+import * as switching from './backends/switching.js';
+import * as catalog from './backends/catalog.js';
 
 export class ToolError extends Error {}
 
@@ -335,6 +337,89 @@ async function deleteRole(client, message, args) {
   return `Deleted role ${name}.`;
 }
 
+// -- AI backends ------------------------------------------------------------
+
+/* Two models are configured per server and people call the second one all
+   sorts of things out loud — "maintenance", "background", "upkeep", "the
+   cheap one". Spelling those out in the enum description is what makes
+   "switch the maintenance model to Haiku" land on role=utility instead of
+   silently changing the model that answers people. */
+const ROLE_ARG = {
+  type: 'string',
+  enum: ['chat', 'utility'],
+  description: 'chat = the model that writes replies (default). '
+    + 'utility = the background model, also called the maintenance, upkeep or '
+    + 'utility model — it runs memory consolidation, signal classification and '
+    + 'de-escalation.',
+};
+
+/** What she can switch to, and what each one would cost. */
+async function listBackends(client, message, args) {
+  const role = args.role === 'utility' ? 'utility' : 'chat';
+  const current = switching.currentModel(message.guild.id, role);
+  const options = switching.shortlist(message.guild.id, role);
+  const label = role === 'utility' ? 'Background/utility' : 'Conversational';
+  if (!options.length) {
+    return `${label} model is ${current}. No alternatives available right now `
+      + '(the model catalog may not have refreshed yet).';
+  }
+  const lines = options.map((o, i) => `${String.fromCharCode(65 + i)}: ${o.label} (${o.id}) — `
+    + `${o.free ? 'free' : o.costNote}`);
+  return `${label} model is currently ${current}.\nAvailable alternatives:\n${lines.join('\n')}`;
+}
+
+/** Point a role at a different backend. Accepts an exact id or a spoken name
+ *  like "haiku", so this works when asked out loud. */
+async function switchBackend(client, message, args) {
+  const role = args.role === 'utility' ? 'utility' : 'chat';
+  const wanted = String(args.model || '').trim();
+  if (!wanted) throw new ToolError('which model should I switch to?');
+  const guildId = message.guild.id;
+
+  if (/^(back|previous|undo)$/i.test(wanted)) {
+    const previous = switching.previousModel(guildId, role);
+    if (!previous) throw new ToolError('there is no previous model to go back to.');
+    const back = switching.switchTo(guildId, role, previous);
+    return `Switched the ${role} model back to ${back.to}.`;
+  }
+
+  // Exact id first, then a forgiving name match against the catalog — models
+  // are named things like "anthropic/claude-3.5-haiku" and nobody says that.
+  const exact = catalog.get(wanted);
+  let target = exact?.id;
+  if (!target) {
+    const needle = wanted.toLowerCase();
+    const pool = catalog.list({ toolsOnly: role === 'chat' })
+      .filter((m) => m.id.toLowerCase().includes(needle)
+        || m.name.toLowerCase().includes(needle));
+    if (!pool.length) throw new ToolError(`no model matching "${wanted}" — try list_ai_backends.`);
+    // Prefer an available one; a name that only matches parked models is
+    // worth saying out loud rather than silently switching to something dead.
+    const usable = pool.filter((m) => switching.isAvailable(m.id));
+    if (!usable.length) throw new ToolError(`every model matching "${wanted}" is rate limited right now.`);
+    target = usable[0].id;
+  }
+  // An exact id skips the filtered list above, so the capability checks have
+  // to happen here too — otherwise "switch the maintenance model to
+  // lyria-3-clip-preview" is accepted and every background call 502s after it.
+  const chosen = catalog.get(target);
+  if (chosen && !chosen.canChat) {
+    throw new ToolError(`${target} isn't a chat model — it can't answer in text at all. `
+      + 'Try list_ai_backends for what I can actually switch to.');
+  }
+  if (role === 'chat' && !chosen?.supportsTools) {
+    throw new ToolError(`${target} can't do tool calling, so it would lose most of my abilities. `
+      + 'Pick another, or set it on the dashboard if you really want it.');
+  }
+  if (!switching.isAvailable(target)) {
+    throw new ToolError(`${target} is rate limited right now — pick another.`);
+  }
+  const result = switching.switchTo(guildId, role, target);
+  switching.clearOffer(guildId);
+  if (!result.changed) return `Already using ${target} for ${role}.`;
+  return `Switched the ${role} model from ${result.from} to ${result.to}.`;
+}
+
 // -- registry ---------------------------------------------------------------
 
 const USER = str('The member: a mention, user ID, username, or display name');
@@ -392,6 +477,19 @@ export const TOOLS = {
   create_role: [schema('create_role', 'Create a new role.',
     { name: str('Name for the new role'), color: str('Hex color, e.g. #5865F2 (optional)') }, ['name']), createRole],
   delete_role: [schema('delete_role', 'Delete a role.', { role: str('Role name, mention, or ID') }, ['role']), deleteRole],
+  list_ai_backends: [schema('list_ai_backends',
+    'List which AI model this server is using and what it can switch to, with costs. '
+    + 'Use when asked what models are available or which one is in use — for '
+    + 'replies, or for the background/maintenance/utility model.',
+    { role: ROLE_ARG }), listBackends],
+  switch_ai_backend: [schema('switch_ai_backend',
+    'Switch which AI model this server uses. Accepts an OpenRouter model id or a '
+    + 'spoken name like "haiku", or "back" to undo the last switch. Works for the '
+    + 'reply model and for the background/maintenance/utility model — pass role.',
+    {
+      model: str('Model id, a name fragment like "haiku", or "back" to revert'),
+      role: ROLE_ARG,
+    }, ['model']), switchBackend],
 };
 
 export const TOOL_SCHEMAS = Object.values(TOOLS).map(([s]) => s);

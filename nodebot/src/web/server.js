@@ -24,10 +24,13 @@ import {
   createState, verifyState, TOKEN_TTL,
 } from './auth.js';
 import { LEVELS, levelAtLeast, resolveLevel, memberFacts } from './roles.js';
+import { HttpError } from './httpError.js';
+import { platformRoutes, resolvePlatformSession } from '../platform/routes.js';
 import {
   oauthConfigured, authorizeUrl, exchangeCode, fetchDiscordUser,
 } from './oauth.js';
 import { chat, OpenRouterError } from '../openrouter.js';
+import * as credits from '../credits/index.js';
 import { PHRASE_LIST_KEYS, parsePhraseList } from '../phrases.js';
 import { botName } from '../botName.js';
 import { logAction } from '../utils.js';
@@ -42,6 +45,16 @@ const STATIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'stat
 const SITE_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '../../../site');
 const DASHBOARD_ACTOR = 'Dashboard';
 
+/* Short URLs for the two pages Discord requires in the application's settings.
+   Both spellings are served so a link written either way keeps working — these
+   end up pasted into places nobody will revisit. */
+const LEGAL_PAGES = {
+  '/privacy': 'privacy.html',
+  '/privacy-policy': 'privacy.html',
+  '/terms': 'terms.html',
+  '/tos': 'terms.html',
+};
+
 const CONTENT_TYPES = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
@@ -51,14 +64,6 @@ const CONTENT_TYPES = {
   '.ico': 'image/x-icon',
   '.md': 'text/markdown; charset=utf-8',
 };
-
-class HttpError extends Error {
-  constructor(status, detail) {
-    super(detail);
-    this.status = status;
-    this.detail = detail;
-  }
-}
 
 // -- serialization -----------------------------------------------------------
 
@@ -202,6 +207,11 @@ async function levelForUser(client, userId) {
 // cannot accidentally be added unauthenticated.
 function buildRoutes(client) {
   return [
+    // The customer-facing platform — accounts, orders, credits. Declares its
+    // own auth (`account: 'any' | 'staff'`), which the dispatcher below
+    // enforces separately from the Discord dashboard's access levels.
+    ...platformRoutes(),
+
     // The password is the instance owner's way in, and stays creator-level.
     // It is also the break-glass path: if Discord OAuth is misconfigured, or
     // the role mapping locks everyone out, this still works.
@@ -414,9 +424,17 @@ function buildRoutes(client) {
         const result = await chat([
           { role: 'system', content: prompt },
           { role: 'user', content: body.text },
-        ], { model: db.getSetting(g.id, 'ai_model'), maxTokens: 600, temperature: 0.8 });
+        ], {
+          model: db.getSetting(g.id, 'ai_model'),
+          maxTokens: 600,
+          temperature: 0.8,
+          guildId: g.id,
+        });
         return { text: result.trim() };
       } catch (err) {
+        if (err instanceof credits.InsufficientCreditsError) {
+          throw new HttpError(402, 'Out of credits — top the balance up to use this.');
+        }
         if (err instanceof OpenRouterError) throw new HttpError(502, err.message);
         throw err;
       }
@@ -804,12 +822,40 @@ export function createDashboard(client) {
         return;
       }
 
+      // The legal pages get short, stable URLs of their own rather than living
+      // under /site/. These go into Discord's application settings and into
+      // other people's bookmarks, and a URL with "/site/" and ".html" in it is
+      // one that cannot be reorganised later without breaking them. Cached for
+      // an hour: they change rarely, and Discord fetches them for review.
+      if (req.method === 'GET' && LEGAL_PAGES[pathname]) {
+        await serveStatic(res, LEGAL_PAGES[pathname], {
+          dir: SITE_DIR, cacheControl: 'public, max-age=3600',
+        });
+        return;
+      }
+
       for (const [method, pattern, handler, options] of routes) {
         if (req.method !== method) continue;
         const params = matchRoute(pattern, pathname);
         if (!params) continue;
         let session = null;
-        if (!options?.open) {
+        let platform = null;
+        if (options?.account) {
+          // Platform routes authenticate as a CUSTOMER, not against this
+          // Discord server's roles. A creator-level dashboard cookie is not
+          // a platform session and deliberately does not stand in for one:
+          // the person running a server and the person who owns the account
+          // paying for it are frequently not the same human.
+          platform = resolvePlatformSession(req);
+          if (!platform) {
+            sendJson(res, 401, { detail: 'Not signed in' });
+            return;
+          }
+          if (options.account === 'staff' && !platform.isStaff) {
+            sendJson(res, 403, { detail: 'That is staff-only.' });
+            return;
+          }
+        } else if (!options?.open) {
           session = sessionOf(req);
           if (!session) {
             sendJson(res, 401, { detail: 'Not authenticated' });
@@ -829,7 +875,7 @@ export function createDashboard(client) {
         const body = ['POST', 'PUT', 'PATCH'].includes(method) ? await readBody(req) : {};
         const query = Object.fromEntries(url.searchParams);
         const result = await handler({
-          params, body, query, req, res, session,
+          params, body, query, req, res, session, platform, sendJson,
         });
         if (result !== undefined && !res.writableEnded) sendJson(res, 200, result);
         return;

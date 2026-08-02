@@ -25,6 +25,12 @@ import {
   VOICE_STOP_LISTENING_WORDS, VOICE_FOLLOWUP_WINDOW_SEC, OPENROUTER_MODEL,
 } from './config.js';
 import { SYSTEM_PROMPT, CAPABILITY_PROMPT } from './persona.js';
+// Platform tables (accounts, servers, orders, the credit ledger) live in the
+// same file but are owned by src/platform and src/credits. Only the schema
+// string is imported here — the modules that read and write those tables get
+// the handle back through getDb(), so nothing has to import this module's
+// internals and there is no cycle.
+import { PLATFORM_SCHEMA } from './platform/schema.js';
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS guild_settings (
@@ -92,6 +98,19 @@ CREATE TABLE IF NOT EXISTS turns (
     ts           REAL NOT NULL,
     consolidated INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (guild_id, seq)
+);
+-- OpenRouter's model list, refreshed hourly. Cached here so a restart or an
+-- OpenRouter outage still leaves her something to fall back to at the moment
+-- the current backend starts refusing. See backends/catalog.js.
+CREATE TABLE IF NOT EXISTS model_catalog (
+    id               TEXT PRIMARY KEY,
+    name             TEXT NOT NULL,
+    context_length   INTEGER,
+    prompt_price     REAL,
+    completion_price REAL,
+    supports_tools   INTEGER NOT NULL DEFAULT 0,
+    can_chat         INTEGER NOT NULL DEFAULT 0,
+    fetched_at       INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_warnings_guild_user ON warnings (guild_id, user_id);
 CREATE INDEX IF NOT EXISTS idx_logs_guild ON mod_logs (guild_id, created_at);
@@ -185,6 +204,12 @@ export const DEFAULTS = {
   // Spend breaker for the expensive half: videos per guild per hour, 0 to
   // disable the cap entirely. Images are cheap enough to leave uncapped.
   media_video_hourly_cap: 5,
+  // What each model was before the last backend switch, so "switch back"
+  // works after she has rerouted around a rate-limited provider. Persisted
+  // rather than held in memory so a redeploy mid-incident doesn't strand a
+  // server on a fallback nobody chose.
+  ai_model_previous: null,
+  ai_utility_model_previous: null,
   // voice monitoring master switch (dashboard start/stop)
   voice_enabled: false,
   // Dashboard access, mapped to this server's own Discord roles. Anyone in a
@@ -240,12 +265,55 @@ export function initDb(path = 'nodebot.db') {
   }
   db = handle;
   db.exec(SCHEMA);
+  db.exec(PLATFORM_SCHEMA);
+  refreshModelCatalogShape();
   return db;
+}
+
+/**
+ * Drop the model catalog when its columns are out of date.
+ *
+ * It is a pure cache of OpenRouter's model list, refetched every hour, so
+ * throwing it away costs nothing and rebuilding it is automatic. That is much
+ * safer than an ALTER TABLE dance: a column added with a DEFAULT would leave
+ * every cached row claiming the default, and `can_chat` defaulting to 0 would
+ * silently empty the fallback list on an existing deployment while
+ * `can_chat` defaulting to 1 would keep routing to music generators.
+ */
+function refreshModelCatalogShape() {
+  let columns;
+  try {
+    columns = db.prepare("SELECT name FROM pragma_table_info('model_catalog')").all();
+  } catch {
+    return; // no such table yet — the schema above just created it
+  }
+  if (!columns.length) return;
+  const names = new Set(columns.map((c) => c.name));
+  const expected = ['id', 'name', 'context_length', 'prompt_price',
+    'completion_price', 'supports_tools', 'can_chat', 'fetched_at'];
+  if (expected.every((c) => names.has(c))) return;
+  console.log('[db] model catalog shape changed — dropping the cache to rebuild');
+  db.exec('DROP TABLE model_catalog');
+  db.exec(SCHEMA);
 }
 
 export function closeDb() {
   db?.close();
   db = null;
+}
+
+/**
+ * The open database handle, for the platform and credit modules.
+ *
+ * They keep their own SQL rather than growing this module, but they must
+ * share this one connection: node:sqlite is synchronous and single-writer,
+ * and a second DatabaseSync against the same file would take its own lock and
+ * turn a metering write into SQLITE_BUSY under exactly the concurrency the
+ * bot generates.
+ */
+export function getDb() {
+  if (!db) throw new Error('database not initialised — call initDb() first');
+  return db;
 }
 
 function now() {

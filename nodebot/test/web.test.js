@@ -445,3 +445,33 @@ test('role mappings save like any other setting', () => withServer(async (call) 
   assert.deepEqual(s.dashboard_admin_roles, ['500']);
   assert.deepEqual(s.dashboard_mod_roles, ['600']);
 }));
+
+/* ── Legal pages ──────────────────────────────────────────────────────────
+   These URLs go into Discord's application settings and cannot be changed
+   afterwards without breaking the link, so they get tested like an API. */
+
+test('the legal pages are served, unauthenticated, at their short URLs', () => withServer(async (call) => {
+  for (const [urlPath, marker] of [['/privacy', 'Privacy Policy'], ['/terms', 'Terms of Service']]) {
+    const res = await call('GET', urlPath);
+    assert.equal(res.status, 200, `${urlPath} must not require signing in`);
+    assert.match(res.headers.get('content-type'), /text\/html/);
+    const html = await res.text();
+    assert.match(html, new RegExp(`<title>${marker}`));
+    // Assets have to be absolute: the same file is reachable at /privacy and
+    // at /site/privacy.html, and a relative href resolves differently at each.
+    assert.ok(!/(href|src)="(?!\/|https?:|data:|mailto:|#)/.test(html),
+      `${urlPath} has a relative link that will 404 at this depth`);
+  }
+}));
+
+test('the alternate spellings resolve to the same pages', () => withServer(async (call) => {
+  // Whichever form gets pasted somewhere permanent, it works.
+  assert.match(await (await call('GET', '/privacy-policy')).text(), /<title>Privacy Policy/);
+  assert.match(await (await call('GET', '/tos')).text(), /<title>Terms of Service/);
+}));
+
+test('the legal routes cannot be walked out of the site directory', () => withServer(async (call) => {
+  // The route table is a fixed map rather than a path join, so there is no
+  // user-supplied segment to traverse with — this pins that down.
+  assert.equal((await call('GET', '/privacy/../../package.json')).status, 404);
+}));

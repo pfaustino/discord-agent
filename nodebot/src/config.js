@@ -46,6 +46,11 @@ export const OPENROUTER_VIDEO_MODEL = process.env.OPENROUTER_VIDEO_MODEL || 'goo
 export const GITHUB_TOKEN = process.env.GITHUB_TOKEN || '';
 export const GITHUB_REPO = process.env.GITHUB_REPO || 'seed0001/discord-agent';
 
+// Web search: duck-duck-scrape is blocked from most cloud/datacenter IPs
+// (Railway included). BRAVE_SEARCH_API_KEY enables full Brave Web Search;
+// without it, web_search falls back to DuckDuckGo's limited instant-answer API.
+export const BRAVE_SEARCH_API_KEY = process.env.BRAVE_SEARCH_API_KEY || '';
+
 // Speech-to-text: any OpenAI-compatible /audio/transcriptions endpoint
 // (OpenAI Whisper, Groq, ...) — same env vars as the Python bot.
 export const TRANSCRIPTION_API_KEY = process.env.TRANSCRIPTION_API_KEY || '';
@@ -56,6 +61,15 @@ export const TRANSCRIPTION_MODEL = process.env.TRANSCRIPTION_MODEL || 'whisper-1
 export const FISH_API_KEY = process.env.FISH_API_KEY || '';
 export const FISH_TTS_MODEL = process.env.FISH_TTS_MODEL || 's2.1-pro-free';
 export const FISH_VOICE_ID = process.env.FISH_VOICE_ID || '';
+// Microsoft Edge neural voice when Fish Audio is not configured — any
+// name from https://speech.microsoft.com/portal/voicegallery (e.g.
+// en-US-JennyNeural, en-US-GuyNeural).
+//
+// The default is the voice this shipped with, so adding the knob doesn't
+// silently change how every existing deployment sounds on the next deploy —
+// that is a product decision, and it belongs in someone's environment rather
+// than in a default. Set EDGE_TTS_VOICE to pick a different one.
+export const EDGE_TTS_VOICE = process.env.EDGE_TTS_VOICE || 'en-US-GuyNeural';
 
 // Env-configured fallback defaults (used to seed db.js's DEFAULTS) — the
 // live, per-guild values come from db.getSetting(guildId, 'voice_wake_words'
@@ -122,3 +136,22 @@ export const MIN_UTTERANCE_RMS = parseInt(process.env.MIN_UTTERANCE_RMS || '300'
 
 // SQLite file path for the persistence layer (db.js).
 export const DATABASE_PATH = process.env.DATABASE_PATH || 'nodebot.db';
+
+// Curated fallback backends, in preference order — comma-separated OpenRouter
+// model ids. Set this and it replaces the automatic pick entirely, so the
+// three options she offers are the three you chose. Leave it empty and she
+// picks them from the live catalog: one free, one cheap, one steady-vendor,
+// which spans tiers on purpose (three free models all hit the same daily
+// quota on the same day, which is the failure being routed around).
+export const OPENROUTER_FALLBACK_MODELS = (process.env.OPENROUTER_FALLBACK_MODELS || '')
+  .split(',').map((m) => m.trim()).filter(Boolean);
+
+// Platform staff: the people who can see the order queue and issue credits.
+//
+// This exists to solve the bootstrap — the first staff account cannot be
+// promoted by an existing staff account, because there isn't one. Any account
+// whose email is listed here is staff regardless of its stored flag, so
+// access can also be taken back by editing the environment when the database
+// is the thing you cannot reach.
+export const PLATFORM_STAFF_EMAILS = (process.env.PLATFORM_STAFF_EMAILS || '')
+  .split(',').map((e) => e.trim().toLowerCase()).filter(Boolean);

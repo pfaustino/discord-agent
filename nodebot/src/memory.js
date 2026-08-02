@@ -28,6 +28,7 @@
 // manuscript — no toggle, no command, unconditional.
 import { OWNER_ID } from './config.js';
 import { chat, OpenRouterError } from './openrouter.js';
+import { InsufficientCreditsError } from './credits/index.js';
 import * as db from './db.js';
 
 const TURN_BUFFER = 60;        // raw turns kept per guild for consolidation
@@ -361,8 +362,13 @@ async function consolidate(guildId) {
       temperature: 0.2,
       maxTokens: 4096,
       background: true,
+      guildId,
     });
   } catch (err) {
+    if (err instanceof InsufficientCreditsError) {
+      console.warn('[memory] out of credits — skipping consolidation');
+      return;
+    }
     if (err instanceof OpenRouterError) {
       console.warn('[memory] consolidation failed:', err.message);
       return;

@@ -516,20 +516,29 @@
     $('[data-pipeline-preview]').innerHTML = pipelineHTML(null);
 
     if (submitted) {
-      var req = findRequest(state.requestId);
+      var req = findRequest();
       var stage = req ? req.stage : 'submitted';
+      var problems = (req && req.details && req.details.validationErrors) || [];
       $('[data-request-id]').textContent = state.requestId;
       $('[data-pipeline-live]').innerHTML = pipelineHTML(stage);
-      $('[data-submitted-title]').textContent = stage === 'ready'
-        ? state.name + ' is ready.'
-        : 'Request submitted.';
-      $('[data-submitted-body]').textContent = stage === 'ready'
-        ? 'Provisioned and waiting to be invited.'
+      $('[data-submitted-title]').textContent = 'Order received.';
+      $('[data-submitted-body]').textContent = problems.length
+        ? 'Recorded, but the capability set needs a look: ' + problems.join('; ')
+          + ' We will sort it out with you on the call.'
         : (enterprise
-          ? 'The automated checks have run. An engineer will be in touch to take the key handover before anything is provisioned.'
-          : 'The automated checks have run. A person confirms the module set, then provisioning is automatic.');
-      $('[data-invite-block]').hidden = stage !== 'ready';
-      if (stage === 'ready') $('[data-invite]').value = inviteURL();
+          ? 'The automated checks passed. We will be in touch to arrange the key '
+            + 'handover and the build session — nothing is provisioned until then.'
+          : 'The automated checks passed. Next we get in a room with you and build '
+            + 'the bot out together, so it does what your server actually needs.');
+      // The invite link is issued by a person at the end of provisioning, so
+      // there is nothing to show here yet.
+      $('[data-invite-block]').hidden = true;
+    }
+
+    var errBox = $('[data-submit-error]');
+    if (errBox) {
+      errBox.innerHTML = submitError
+        ? '<div class="banner banner--warn"><span>' + esc(submitError) + '</span></div>' : '';
     }
 
     /* rail */
@@ -582,21 +591,34 @@
       + ' replies/day' + (hasVoice() ? ' plus 20 voice minutes/day' : '') + '.';
   }
 
-  function findRequest(id) {
-    return P.Store.read().requests.filter(function (r) { return r.id === id; })[0] || null;
+  /* The order as the backend recorded it, once submitted. */
+  var submittedRequest = null;
+  var submitError = '';
+
+  function findRequest() {
+    return submittedRequest;
   }
 
-  /* Submitting writes the request into the shared store, runs the automatic
-     stages immediately, and stops at the first one needing a person. */
-  function submitRequest() {
+  /**
+   * Send the order.
+   *
+   * Nothing is provisioned by this. It records what the customer wants and
+   * puts it in front of a person — the automatic stages (recording it,
+   * checking the capability set against the tier) run synchronously so an
+   * impossible combination comes back now rather than on the call.
+   *
+   * Note what is NOT sent: the enterprise key fields. Only whether each was
+   * filled in travels, never the key itself. A provider key does not belong
+   * in a form post, and handover happens on the call.
+   */
+  async function submitRequest() {
     var tier = activeTier();
-    var id = P.newId('req');
-    var request = {
-      id: id,
+    submitError = '';
+    var payload = {
       venue: state.venue,
-      accountName: state.accountName || 'Unnamed account',
+      accountName: state.accountName || '',
       email: state.email || '',
-      serverName: state.serverName || 'Unnamed server',
+      serverName: state.serverName || '',
       botName: state.name,
       accent: state.accent,
       tier: tier.id,
@@ -611,12 +633,16 @@
         transcription: state.keys.transcription.trim() ? 'supplied' : 'pending',
         fish: state.keys.fish.trim() ? 'supplied' : 'not-supplied',
       } : null,
-      stage: 'review',
-      submittedAt: Date.now(),
-      notes: '',
     };
-    P.Store.update(function (data) { data.requests.unshift(request); });
-    state.requestId = id;
+    try {
+      var result = await P.API.submitOrder(payload);
+      submittedRequest = result.request;
+      state.requestId = result.requestId;
+    } catch (err) {
+      submitError = err.status === 0
+        ? 'Could not reach the server — nothing was submitted. Try again in a moment.'
+        : err.message;
+    }
   }
 
   function summaryHTML(tier, grad) {
@@ -714,9 +740,12 @@
 
     var submit = t.closest('[data-submit]');
     if (submit) {
-      submitRequest();
-      render();
-      window.scrollTo({ top: 0, behavior: 'smooth' });
+      submit.disabled = true;
+      submitRequest().then(function () {
+        submit.disabled = false;
+        render();
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      });
       return;
     }
 
@@ -858,4 +887,9 @@
   });
 
   render();
+
+  // Live pricing and pipeline, so the rail quotes what we actually charge.
+  // The static copies in platform.js already rendered; this refreshes them if
+  // the backend is reachable and is a no-op if it is not.
+  if (P.API) P.API.catalog().then(render, function () {});
 })();

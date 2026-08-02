@@ -782,9 +782,6 @@ async function renderSettings() {
     // permission to read it, still gets a working settings page.
     api(`/guilds/${state.guildId}/soundboard`).catch(() => []),
   ]);
-  // Lowercased bot name for the example phrases below — the matcher lowercases
-  // everything anyway, so the examples should look the way a saved phrase does.
-  const lower = botLabel(settings).toLowerCase();
   const textChannels = channels.filter((c) => c.type === "text");
   // Bot/integration-managed roles can't be handed out to people, so they're
   // no use as a dashboard-access group.
@@ -925,19 +922,20 @@ async function renderSettings() {
     <div class="card">
       <label class="field"><span class="lbl">Wake words</span>
         <input id="s-voice_wake_words" value="${esc(brackets(settings.voice_wake_words))}"
-          placeholder="${esc(`[hey ${lower}] [yo ${lower}]`)}"></label>
+          placeholder="[hey {ai}] [{ai}, you around?]"></label>
       <label class="field"><span class="lbl">Cancel words (abort a pending reply)</span>
         <input id="s-voice_cancel_words" value="${esc(brackets(settings.voice_cancel_words))}"
           placeholder="[never mind] [forget it] [cancel that]"></label>
       <label class="field"><span class="lbl">Stop speaking (cut him off, stay in the conversation)</span>
         <input id="s-voice_stop_speaking_words" value="${esc(brackets(settings.voice_stop_speaking_words))}"
-          placeholder="${esc(`[${lower} stop speaking] [${lower} be quiet]`)}"></label>
+          placeholder="[{ai} stop speaking] [{ai} be quiet]"></label>
       <label class="field"><span class="lbl">Stop listening (end the conversation)</span>
         <input id="s-voice_stop_listening_words" value="${esc(brackets(settings.voice_stop_listening_words))}"
-          placeholder="${esc(`[${lower} stop listening] [${lower} go to sleep]`)}"></label>
+          placeholder="[{ai} stop listening] [{ai} go to sleep]"></label>
       <span class="muted">Put each phrase in its own [brackets] — that way a phrase
-        can contain a comma, like [${esc(lower)}, you around?]. Punctuation and capitals are
-        ignored when matching, so what you save is the tidied-up version.
+        can contain a comma, like [{ai}, you around?]. Use <code>{ai}</code> as a
+        placeholder for the bot's name (Helena, etc.) so wake words follow renames.
+        Punctuation and capitals are ignored when matching.
         Say a wake word to pull the bot into the conversation; a cancel word right
         after calls it off before he answers. Once he's spoken he keeps listening
         for a follow-up, until someone tells him to stop speaking or stop listening.</span>
