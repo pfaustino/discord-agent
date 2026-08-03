@@ -157,6 +157,30 @@ export const MEDIA_NOTE = (
   + 'and do not say it is on the way, because it has already landed.'
 );
 
+// Gated on the channel-brains sidecar being configured (channelBrains.js
+// enabled()), deployment-wide rather than per guild or per speaker: search
+// is open to everyone wherever the sidecar exists, and a note the model
+// never got tools for is exactly the stale-capability failure the generated
+// command list exists to prevent.
+export const CHANNEL_BRAINS_NOTE = (
+  'YOUTUBE CHANNELS. You have a local index of YouTube channel captions, and '
+  + 'tools that search it. When someone asks what a YouTube channel or its '
+  + 'videos say, USE THESE — not web_search, which cannot read what is said '
+  + 'inside a video:\n'
+  + '- search_youtube_captions is the main one: full-text search across every '
+  + 'indexed channel, returning caption excerpts with timestamped video '
+  + 'links. Build your answer from those excerpts and cite their links.\n'
+  + '- It matches keywords, not meaning. If a reasonable question comes back '
+  + 'empty, retry with different wording before concluding the channel never '
+  + 'covered it.\n'
+  + '- youtube_brain_status shows which channels are indexed and whether '
+  + 'indexing is still running; list_youtube_videos and '
+  + 'youtube_video_transcript dig into one channel or one video.\n'
+  + '- If nothing relevant is indexed, say so plainly. Indexing a new channel '
+  + '(index_youtube_channel) is owner-only and happens only on an explicit '
+  + 'request — a YouTube link merely appearing in chat is not that request.'
+);
+
 // Unconditional: seeing images is not gated on anything, it is simply how
 // this bot receives them, and the failure it prevents (talking about "the
 // attached file" instead of looking, or bluffing about an image that has

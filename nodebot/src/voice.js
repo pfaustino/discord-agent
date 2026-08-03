@@ -30,6 +30,7 @@ import * as transcription from './transcription.js';
 import * as tts from './tts.js';
 import { TOOL_SCHEMAS, runTool } from './tools.js';
 import { KB_TOOL_SCHEMAS, runTool as runKbTool } from './knowledge.js';
+import * as channelBrains from './channelBrains.js';
 import * as agentTools from './agentTools.js';
 import * as mediaTools from './mediaTools.js';
 import * as github from './github.js';
@@ -581,6 +582,8 @@ async function respond(channel, speakerName, speakerId, state, { followUp = fals
     ...baseTools,
     ...(owner ? agentTools.TOOL_SCHEMAS : []),
     ...(canGenerate ? mediaTools.TOOL_SCHEMAS : []),
+    ...(channelBrains.enabled() ? channelBrains.TOOL_SCHEMAS : []),
+    ...(channelBrains.enabled() && owner ? channelBrains.OWNER_TOOL_SCHEMAS : []),
   ];
   const toolHandler = async (name, args) => {
     if (name === 'recall_chat_log') return memory.recall(guild.id, args);
@@ -591,6 +594,8 @@ async function respond(channel, speakerName, speakerId, state, { followUp = fals
     // No owner check: mediaTools.execute re-checks access itself, so gating
     // here would only duplicate it — and get it wrong for open guilds.
     if (name in mediaTools.TOOLS) return mediaTools.execute(null, fakeMessage, name, args);
+    // Same shape: execute re-checks the owner gate on index/delete itself.
+    if (channelBrains.isChannelBrainsTool(name)) return channelBrains.execute(name, args, owner);
     return runTool(name, args);
   };
   const onToolCalls = (owner || canGenerate) ? async (toolCalls) => {

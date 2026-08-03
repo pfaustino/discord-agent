@@ -12,8 +12,10 @@
 import * as db from './db.js';
 import { botName } from './botName.js';
 import {
-  OWNER_NOTE, MEMBER_NOTE, MEDIA_NOTE, VISION_NOTE,
+  OWNER_NOTE, MEMBER_NOTE, MEDIA_NOTE, VISION_NOTE, CHANNEL_BRAINS_NOTE,
 } from './persona.js';
+// Safe import: channelBrains.js reads only config.js, so no cycle through db.
+import { enabled as channelBrainsEnabled } from './channelBrains.js';
 
 /** The bot's real slash commands, straight from the table index.js loaded.
  *
@@ -62,6 +64,7 @@ export function buildSystemPrompt({
     capabilities,
     VISION_NOTE,
     media ? MEDIA_NOTE : '',
+    channelBrainsEnabled() ? CHANNEL_BRAINS_NOTE : '',
     owner ? OWNER_NOTE : MEMBER_NOTE,
     memory ? `What you remember (maintained across restarts):\n${memory}` : '',
   ].filter(Boolean).join('\n\n');
