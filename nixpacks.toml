@@ -35,8 +35,15 @@
 # Overriding [phases.install] replaces Nixpacks' auto-detected pip install
 # (root requirements.txt still makes it detect a Python app), so no Python
 # dependencies are installed.
+# uv        — runtime, not build: channelBrains.js shells out to
+#             `uvx --from $CHANNEL_BRAINS_SOURCE channel-brains` per tool
+#             call. Without CHANNEL_BRAINS_SOURCE set in Railway variables
+#             the feature is off and uv just sits there unused; with it set,
+#             uvx builds the sidecar env on first call (slow once per deploy)
+#             and fetches its own managed CPython, so the dormant Python
+#             tree stays uninstalled either way.
 [phases.setup]
-nixPkgs = ["nodejs_22"]
+nixPkgs = ["nodejs_22", "uv"]
 aptPkgs = ["ffmpeg", "build-essential", "python3"]
 
 [phases.install]

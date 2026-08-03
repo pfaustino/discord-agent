@@ -10,6 +10,7 @@ import { TOOL_SCHEMAS, runTool } from './tools.js';
 import { KB_TOOL_SCHEMAS, runTool as runKbTool } from './knowledge.js';
 import * as agentTools from './agentTools.js';
 import * as mediaTools from './mediaTools.js';
+import * as channelBrains from './channelBrains.js';
 import * as documents from './documents.js';
 import * as github from './github.js';
 import * as introspect from './introspect.js';
@@ -109,6 +110,8 @@ function toolHandler(client, message, owner) {
     // Not gated on owner: a guild can open generation up to everyone, and
     // mediaTools.execute re-checks that itself rather than trusting us.
     if (name in mediaTools.TOOLS) return mediaTools.execute(client, message, name, args);
+    // Same shape: execute re-checks the owner gate on index/delete itself.
+    if (channelBrains.isChannelBrainsTool(name)) return channelBrains.execute(name, args, owner);
     return runTool(name, args);
   };
 }
@@ -213,6 +216,10 @@ export async function handleMessage(client, message) {
     ...baseTools,
     ...(owner ? agentTools.TOOL_SCHEMAS : []),
     ...(canGenerate ? mediaTools.TOOL_SCHEMAS : []),
+    // Sidecar feature flag first: a deploy without the sidecar never offers
+    // these at all. Search stays open to the guild; indexing is owner-only.
+    ...(channelBrains.enabled() ? channelBrains.TOOL_SCHEMAS : []),
+    ...(channelBrains.enabled() && owner ? channelBrains.OWNER_TOOL_SCHEMAS : []),
   ];
   // Notes ride along as text even when a file was skipped, so he can say
   // "that HEIC didn't come through" instead of ignoring it silently.

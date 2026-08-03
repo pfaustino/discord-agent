@@ -40,6 +40,14 @@ export const OPENROUTER_BG_HOURLY_CAP = parseInt(process.env.OPENROUTER_BG_HOURL
 export const OPENROUTER_IMAGE_MODEL = process.env.OPENROUTER_IMAGE_MODEL || 'google/gemini-2.5-flash-image';
 export const OPENROUTER_VIDEO_MODEL = process.env.OPENROUTER_VIDEO_MODEL || 'google/veo-3.1';
 
+// YouTube channel caption indexing via the channel-brains sidecar
+// (channelBrains.js). Opt-in: unset leaves the feature off and the model
+// never sees the tools. Set to a `uvx --from` source — a local clone path
+// for testing, or the audited pinned commit for a deploy, e.g.
+// git+https://github.com/Pu11en/channel-brains@b26baa7311dbce8ed2110c94b33e8c519f4b7cfa
+// Pin a commit, not a tag: tags can be moved after review. Needs uv on the host.
+export const CHANNEL_BRAINS_SOURCE = process.env.CHANNEL_BRAINS_SOURCE || '';
+
 // GitHub read access. The token is optional — without it the API still
 // works anonymously at 60 requests/hour instead of 5000. GITHUB_REPO is the
 // repo Max lives in, which is what the branch/PR/diff tools read.
