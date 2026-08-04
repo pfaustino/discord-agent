@@ -70,8 +70,6 @@ export function stripMarkdownForTts(text) {
   // Unordered / ordered list markers.
   s = s.replace(/^\s*[-*+]\s+/gm, '');
   s = s.replace(/^\s*\d+\.\s+/gm, '');
-  // Stray formatting characters.
-  s = s.replace(/[*`#]/g, '');
   return s.replace(/\s+/g, ' ').trim();
 }
 

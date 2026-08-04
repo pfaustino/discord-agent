@@ -21,11 +21,24 @@ test('stripMarkdownForTts removes bold, italic, and inline code', () => {
   );
 });
 
-test('stripMarkdownForTts removes headers, list markers, and stray symbols', () => {
+test('stripMarkdownForTts removes headers and list markers', () => {
   assert.equal(
     stripMarkdownForTts('## Title\n- first item\n* second item\n# hash'),
     'Title first item second item hash',
   );
+});
+
+test('stripMarkdownForTts preserves lone asterisks, backticks, and hashes', () => {
+  assert.equal(stripMarkdownForTts('7*2'), '7*2');
+  assert.equal(stripMarkdownForTts('C#'), 'C#');
+  assert.equal(stripMarkdownForTts('issue #42'), 'issue #42');
+  assert.equal(stripMarkdownForTts('foo*bar'), 'foo*bar');
+  assert.equal(stripMarkdownForTts('2**3'), '2**3');
+});
+
+test('stripMarkdownForTts unwraps multi-word italic and bold', () => {
+  assert.equal(stripMarkdownForTts('*hello world*'), 'hello world');
+  assert.equal(stripMarkdownForTts('**bold multi word**'), 'bold multi word');
 });
 
 test('stripMarkdownForTts keeps link label text', () => {
