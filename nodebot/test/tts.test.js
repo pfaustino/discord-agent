@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { stripVoiceTags, isS2, splitForTts } from '../src/tts.js';
+import { stripVoiceTags, stripMarkdownForTts, isS2, splitForTts } from '../src/tts.js';
 
 test('strips S1 parenthesis emotion tags', () => {
   assert.equal(stripVoiceTags('(excited) lets go! (chuckling) nice'), 'lets go! nice');
@@ -12,6 +12,34 @@ test('strips S2 free-form bracket tags', () => {
 
 test('leaves plain text with no tags untouched', () => {
   assert.equal(stripVoiceTags('just a normal reply'), 'just a normal reply');
+});
+
+test('stripMarkdownForTts removes bold, italic, and inline code', () => {
+  assert.equal(
+    stripMarkdownForTts('Try **bold** and *italic* with `code` here.'),
+    'Try bold and italic with code here.',
+  );
+});
+
+test('stripMarkdownForTts removes headers, list markers, and stray symbols', () => {
+  assert.equal(
+    stripMarkdownForTts('## Title\n- first item\n* second item\n# hash'),
+    'Title first item second item hash',
+  );
+});
+
+test('stripMarkdownForTts keeps link label text', () => {
+  assert.equal(
+    stripMarkdownForTts('See [the docs](https://example.com) for more.'),
+    'See the docs for more.',
+  );
+});
+
+test('stripMarkdownForTts unwraps fenced code blocks', () => {
+  assert.equal(
+    stripMarkdownForTts('Use ```js\nconsole.log("hi");\n``` in your app.'),
+    'Use console.log("hi"); in your app.',
+  );
 });
 
 test('does not strip parentheses that are not a recognized tag', () => {

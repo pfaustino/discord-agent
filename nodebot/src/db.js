@@ -171,6 +171,8 @@ export const DEFAULTS = {
   fish_voice_id: null,
   fish_tts_model: null,
   edge_tts_voice: null,
+  // Strip *, `, #, etc. from text before TTS so formatting is not read aloud.
+  tts_strip_markdown: true,
   quiet_mode: false,
   log_channel: null,
   // welcome / goodbye / autorole

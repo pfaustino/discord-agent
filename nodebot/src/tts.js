@@ -3,6 +3,7 @@
 import { MsEdgeTTS, OUTPUT_FORMAT } from 'msedge-tts';
 import { FISH_API_KEY, FISH_TTS_MODEL } from './config.js';
 import * as credits from './credits/index.js';
+import * as db from './db.js';
 import { ttsConfigForGuild } from './ttsConfig.js';
 
 const FISH_URL = 'https://api.fish.audio/v1/tts';
@@ -42,6 +43,57 @@ export function isS2(guildId = null) {
 
 export function stripVoiceTags(text) {
   return text.replace(TAG_RE, '').replace(S2_TAG_RE, '').trim();
+}
+
+/** Strip markdown so TTS reads words, not formatting characters. */
+export function stripMarkdownForTts(text) {
+  let s = String(text);
+  // Fenced code blocks — keep inner text.
+  s = s.replace(/```[^\n]*\n([\s\S]*?)```/g, '$1');
+  // Inline code.
+  s = s.replace(/`([^`\n]+)`/g, '$1');
+  // Links and images — keep label or alt text.
+  s = s.replace(/!\[([^\]]*)\]\([^)]+\)/g, '$1');
+  s = s.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1');
+  s = s.replace(/\[([^\]]+)\]\[[^\]]*\]/g, '$1');
+  // Bold / italic (repeat for nested markers).
+  for (let i = 0; i < 2; i += 1) {
+    s = s.replace(/\*\*([^*\n]+)\*\*/g, '$1');
+    s = s.replace(/__([^_\n]+)__/g, '$1');
+    s = s.replace(/\*([^*\n]+)\*/g, '$1');
+    s = s.replace(/_([^_\n]+)_/g, '$1');
+    s = s.replace(/~~([^~\n]+)~~/g, '$1');
+  }
+  // ATX headers and blockquotes.
+  s = s.replace(/^#{1,6}\s+/gm, '');
+  s = s.replace(/^>\s?/gm, '');
+  // Unordered / ordered list markers.
+  s = s.replace(/^\s*[-*+]\s+/gm, '');
+  s = s.replace(/^\s*\d+\.\s+/gm, '');
+  // Stray formatting characters.
+  s = s.replace(/[*`#]/g, '');
+  return s.replace(/\s+/g, ' ').trim();
+}
+
+function ttsStripMarkdownEnabled(guildId) {
+  if (guildId == null || guildId === undefined) {
+    return db.DEFAULTS.tts_strip_markdown !== false;
+  }
+  try {
+    const value = db.getSetting(guildId, 'tts_strip_markdown');
+    if (value === undefined || value === null) {
+      return db.DEFAULTS.tts_strip_markdown !== false;
+    }
+    return Boolean(value);
+  } catch {
+    return db.DEFAULTS.tts_strip_markdown !== false;
+  }
+}
+
+function prepareTtsText(text, guildId) {
+  let out = String(text);
+  if (ttsStripMarkdownEnabled(guildId)) out = stripMarkdownForTts(out);
+  return out;
 }
 
 // Per-request text budget for each backend. A longer reply is split at
@@ -162,8 +214,9 @@ export function mp3DurationSec(buf) {
  */
 export async function synthesize(text, { guildId = null } = {}) {
   const cfg = ttsConfigForGuild(guildId);
+  const spoken = prepareTtsText(text, guildId);
   if (fishEnabled()) {
-    const audio = await synthesizeWith(text, FISH_CHUNK, (chunk) => fish(chunk, cfg), 'Fish');
+    const audio = await synthesizeWith(spoken, FISH_CHUNK, (chunk) => fish(chunk, cfg), 'Fish');
     if (audio) {
       const seconds = mp3DurationSec(audio);
       if (seconds > 0) {
@@ -178,7 +231,7 @@ export async function synthesize(text, { guildId = null } = {}) {
       return audio;
     }
   }
-  const edgeAudio = await synthesizeWith(stripVoiceTags(text), EDGE_CHUNK, (chunk) => edge(chunk, cfg), 'edge');
+  const edgeAudio = await synthesizeWith(stripVoiceTags(spoken), EDGE_CHUNK, (chunk) => edge(chunk, cfg), 'edge');
   if (!edgeAudio) logTtsFailure(guildId, cfg);
   return edgeAudio;
 }

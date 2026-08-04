@@ -995,6 +995,10 @@ async function renderSettings() {
           <div class="section-title">Speech (TTS)</div>
           <div class="card">
             <p style="margin-bottom:12px">${fishKeyBadge}</p>
+            <label class="toggle"><input type="checkbox" id="s-tts_strip_markdown"
+              ${settings.tts_strip_markdown !== false ? "checked" : ""}> Do not say markdown</label>
+            <span class="muted" style="display:block;margin-bottom:14px">Strip <code>*</code>, <code>\`</code>,
+              <code>#</code>, and other formatting from spoken replies so TTS reads the words, not the markup.</span>
             <span class="muted" style="display:block;margin-bottom:14px">Fish Audio is tried first when the server
               has <code>FISH_API_KEY</code> in Railway; Edge TTS is the free fallback. Leave a field blank here
               to use the deployment default. Changes apply on the next spoken reply — no redeploy.</span>
@@ -1139,6 +1143,7 @@ async function renderSettings() {
       fish_voice_id: $("#s-fish_voice_id").value.trim(),
       fish_tts_model: $("#s-fish_tts_model").value.trim(),
       edge_tts_voice: $("#s-edge_tts_voice").value.trim(),
+      tts_strip_markdown: $("#s-tts_strip_markdown").checked,
       voice_detection_mode: $("#s-voice_detection_mode").value,
       voice_cue_thinking: readCue("thinking"),
       voice_cue_engaging: readCue("engaging"),
