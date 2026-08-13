@@ -1,8 +1,8 @@
-// Image and video generation. media.js's HTTP goes through the global fetch,
-// which is swapped for a fake here (same seam openrouter.test.js uses) — the
+// Image generation. media.js's HTTP goes through the global fetch, which is
+// swapped for a fake here (same seam openrouter.test.js uses) — the
 // sandbox's egress allowlist blocks OpenRouter anyway, and these are about
-// control flow: how a b64 payload becomes a Buffer, how the video job is
-// polled, and who is allowed to spend money on either.
+// control flow: how a b64 payload becomes a Buffer, and who is allowed to
+// spend money.
 //
 // mediaTools tests drive media.js end to end through that same fake fetch
 // rather than stubbing it: `import * as media` gives mediaTools a frozen
@@ -26,30 +26,10 @@ function jsonResponse(body, status = 200) {
   return { ok: status < 400, status, text: async () => JSON.stringify(body) };
 }
 
-function binaryResponse(buf, contentType = 'video/mp4') {
-  return {
-    ok: true,
-    status: 200,
-    headers: { get: (name) => (name.toLowerCase() === 'content-type' ? contentType : null) },
-    arrayBuffer: async () => Uint8Array.from(buf).buffer,
-  };
-}
-
 function withFetch(fn, run) {
   const original = globalThis.fetch;
   globalThis.fetch = fn;
   return run().finally(() => { globalThis.fetch = original; });
-}
-
-/** generateVideo sleeps VIDEO_POLL_INTERVAL_MS (5s) between polls using the
- * global setTimeout, so a two-poll test would otherwise take ten seconds.
- * The interval is a module const and can't be injected, but sleep() resolves
- * setTimeout off globalThis at call time — so swap it, same shape as
- * withFetch. Only the delay is faked; ordering is untouched. */
-function withInstantSleep(run) {
-  const original = globalThis.setTimeout;
-  globalThis.setTimeout = (fn, _ms, ...args) => original(fn, 0, ...args);
-  return run().finally(() => { globalThis.setTimeout = original; });
 }
 
 /** Stands in for a discord.js Attachment — same fake documents.test.js uses.
@@ -68,7 +48,7 @@ const b64 = (text) => Buffer.from(text).toString('base64');
 test('decodes b64_json into a Buffer with the reported media type', () => withFetch(
   async () => jsonResponse({ data: [{ b64_json: b64('PNGBYTES'), media_type: 'image/webp' }] }),
   async () => {
-    const images = await media.generateImage('a cat');
+    const { images } = await media.generateImage('a cat');
     assert.equal(images.length, 1);
     assert.ok(Buffer.isBuffer(images[0].data));
     assert.equal(images[0].data.toString(), 'PNGBYTES');
@@ -79,7 +59,19 @@ test('decodes b64_json into a Buffer with the reported media type', () => withFe
 test('media type falls back to image/png when the API omits it', () => withFetch(
   async () => jsonResponse({ data: [{ b64_json: b64('x') }] }),
   async () => {
-    assert.equal((await media.generateImage('a cat'))[0].mediaType, 'image/png');
+    const { images } = await media.generateImage('a cat');
+    assert.equal(images[0].mediaType, 'image/png');
+  },
+));
+
+test('costUsd reflects OpenRouter usage.cost, and 0 when the API omits it', () => withFetch(
+  async () => jsonResponse({ data: [{ b64_json: b64('x') }], usage: { cost: 0.0042 } }),
+  async () => {
+    const withCost = await media.generateImage('a cat');
+    assert.equal(withCost.costUsd, 0.0042);
+    globalThis.fetch = async () => jsonResponse({ data: [{ b64_json: b64('x') }] });
+    const withoutCost = await media.generateImage('a cat');
+    assert.equal(withoutCost.costUsd, 0);
   },
 ));
 
@@ -141,141 +133,17 @@ test('a blank prompt is rejected before any request goes out', () => {
 });
 
 // ===========================================================================
-// media.js — generateVideo
-// ===========================================================================
-
-/** Submit -> poll -> download, with a scripted list of job states. Each entry
- * is either a bare status string or a whole job body; the first is what the
- * submit returns, the rest are handed out one per poll (the last repeats). */
-function videoFetch(states, { clip = 'MP4BYTES', contentType = 'video/mp4' } = {}) {
-  const calls = [];
-  const job = (i) => {
-    const state = states[Math.min(i, states.length - 1)];
-    return { id: 'job-1', ...(typeof state === 'string' ? { status: state } : state) };
-  };
-  let polls = 0;
-  const fn = async (url, opts = {}) => {
-    calls.push({ url, body: opts.body ? JSON.parse(opts.body) : null });
-    if (url === 'https://openrouter.ai/api/v1/videos') return jsonResponse(job(0));
-    if (url.startsWith('https://openrouter.ai/api/v1/videos/')) {
-      polls += 1;
-      return jsonResponse(job(polls));
-    }
-    return binaryResponse(Buffer.from(clip), contentType);
-  };
-  return { fn, calls };
-}
-
-test('submits, polls through in_progress, then downloads unsigned_urls[0]', () => {
-  const statuses = [];
-  const { fn, calls } = videoFetch([
-    'queued',
-    { status: 'in_progress' },
-    { status: 'completed', unsigned_urls: ['https://files.example/clip.mp4'] },
-  ]);
-  return withInstantSleep(() => withFetch(fn, async () => {
-    const clip = await media.generateVideo('a dog running', {
-      duration: 6, resolution: '720p', aspectRatio: '16:9', onStatus: async (s) => statuses.push(s),
-    });
-    assert.ok(Buffer.isBuffer(clip.data));
-    assert.equal(clip.data.toString(), 'MP4BYTES');
-    assert.equal(clip.contentType, 'video/mp4');
-
-    // submit, poll, poll, download
-    assert.equal(calls.length, 4);
-    assert.equal(calls[0].url, 'https://openrouter.ai/api/v1/videos');
-    assert.equal(calls[1].url, 'https://openrouter.ai/api/v1/videos/job-1');
-    assert.equal(calls[3].url, 'https://files.example/clip.mp4');
-    // each distinct state is announced once, in order
-    assert.deepEqual(statuses, ['queued', 'in_progress']);
-  }));
-});
-
-test('duration, resolution and aspect ratio are passed through to the job', () => {
-  const { fn, calls } = videoFetch([
-    { status: 'completed', unsigned_urls: ['https://files.example/clip.mp4'] },
-  ]);
-  return withFetch(fn, async () => {
-    await media.generateVideo('a dog', { duration: 8, resolution: '480p', aspectRatio: '9:16' });
-    assert.equal(calls[0].body.duration, 8);
-    assert.equal(calls[0].body.resolution, '480p');
-    assert.equal(calls[0].body.aspect_ratio, '9:16');
-    assert.equal(calls[0].body.prompt, 'a dog');
-  });
-});
-
-test('a content type with parameters is trimmed down to the bare type', () => {
-  const { fn } = videoFetch(
-    [{ status: 'completed', unsigned_urls: ['https://files.example/clip.mp4'] }],
-    { contentType: 'video/mp4; codecs="avc1"' },
-  );
-  return withFetch(fn, async () => {
-    assert.equal((await media.generateVideo('a dog')).contentType, 'video/mp4');
-  });
-});
-
-test('a failed job throws with the upstream reason attached', () => {
-  const { fn } = videoFetch([
-    'queued',
-    { status: 'failed', error: { message: 'the prompt was rejected by the safety filter' } },
-  ]);
-  return withInstantSleep(() => withFetch(fn, async () => {
-    await assert.rejects(
-      media.generateVideo('a dog'),
-      (err) => err instanceof media.MediaError
-        && /failed/.test(err.message)
-        && /safety filter/.test(err.message),
-    );
-  }));
-});
-
-test('completing with no download url throws instead of returning nothing', () => {
-  const { fn } = videoFetch([{ status: 'completed', unsigned_urls: [] }]);
-  return withFetch(fn, async () => {
-    await assert.rejects(media.generateVideo('a dog'), /no download url/);
-  });
-});
-
-test('a job response with no id at all is rejected up front', () => withFetch(
-  async () => jsonResponse({ status: 'queued' }),
-  async () => {
-    await assert.rejects(media.generateVideo('a dog'), /no id/);
-  },
-));
-
-test('a job that never finishes times out rather than polling forever', () => {
-  // The injected clock is the whole point of the `now` option: first call
-  // sets the deadline, then it jumps past it so the loop gives up on its
-  // second pass — after one real poll, without waiting ten minutes.
-  const ticks = [0, 0, media.VIDEO_POLL_TIMEOUT_MS + 1];
-  let i = 0;
-  const now = () => ticks[Math.min(i++, ticks.length - 1)];
-  const { fn, calls } = videoFetch(['queued', { status: 'in_progress' }]);
-  return withInstantSleep(() => withFetch(fn, async () => {
-    await assert.rejects(
-      media.generateVideo('a dog', { now }),
-      (err) => err instanceof media.MediaError
-        && /still in_progress/.test(err.message)
-        && /stopped waiting/.test(err.message),
-    );
-    assert.equal(calls.length, 2, 'gave up after one poll, and never downloaded');
-  }));
-});
-
-test('a blank video prompt is rejected before any request goes out', () => {
-  let calls = 0;
-  return withFetch(
-    async () => { calls += 1; return jsonResponse({}); },
-    async () => {
-      await assert.rejects(media.generateVideo('  '), media.MediaError);
-      assert.equal(calls, 0);
-    },
-  );
-});
-
-// ===========================================================================
 // mediaTools.js
 // ===========================================================================
+//
+// generate_video's own script/image/narration/assembly logic lives in
+// videomaker.js and is covered end-to-end there with injectable fakes for
+// the pieces that aren't fetch-based (narration, ffmpeg). What's left to
+// test here is what this file is actually responsible for: access control,
+// the spend/time breaker, and the Discord-side wiring (notice posted, then
+// cleaned up either way) — exercised through a real script-generation
+// failure, since that's the one stage reachable through the fetch fake
+// before anything touches TTS or ffmpeg.
 
 function withDb(fn) {
   return async () => {
@@ -303,7 +171,11 @@ function fakeMessage(authorId = OWNER, { premiumTier = 0 } = {}) {
     channel: {
       send: async (payload) => {
         sent.push(payload);
-        const notice = { id: `msg-${sent.length}`, delete: async () => { deleted.push(notice.id); } };
+        const notice = {
+          id: `msg-${sent.length}`,
+          edit: async () => {},
+          delete: async () => { deleted.push(notice.id); },
+        };
         return notice;
       },
     },
@@ -423,81 +295,99 @@ test('an unknown tool name is reported, not run', withDb(async () => {
   assert.match(result, /unknown tool/);
 }));
 
-test('the video hourly cap refuses past the limit without calling the API', withDb(async () => {
+// -- video: the hourly breaker, in isolation ---------------------------------
+//
+// takeVideoSlot is pure state-tracking (no HTTP), so it's tested directly
+// here as well as indirectly further down through execute().
+
+test('takeVideoSlot refuses past the limit, and a cap of 0 is unlimited', () => {
+  mediaTools._videoCalls.clear();
+  try {
+    let now = 0;
+    mediaTools.takeVideoSlot('1', 1, now);
+    assert.throws(
+      () => mediaTools.takeVideoSlot('1', 1, now),
+      (err) => /cap/.test(err.message) && /minute/.test(err.message),
+    );
+    // a different guild has its own slot
+    mediaTools.takeVideoSlot('2', 1, now);
+    // an hour later the slot is free again
+    now += 60 * 60_000 + 1;
+    mediaTools.takeVideoSlot('1', 1, now);
+    // cap 0 never refuses, however many calls
+    for (let i = 0; i < 5; i += 1) mediaTools.takeVideoSlot('3', 0, now);
+  } finally {
+    mediaTools._videoCalls.clear();
+  }
+});
+
+// -- video: a missing topic never touches the network or the breaker --------
+
+test('a missing topic is a ToolError string, and never claims a video slot', withDb(async () => {
+  const result = await mediaTools.execute(null, fakeMessage(), 'generate_video', {}, OWNER);
+  assert.match(result, /^Error: .*needs a topic/);
+  // slot not consumed: a cap of 1 still has room afterward
   db.setSetting('1', 'media_video_hourly_cap', 1);
-  const { fn, calls } = videoFetch([
-    { status: 'completed', unsigned_urls: ['https://files.example/clip.mp4'] },
-  ]);
-  await withFetch(fn, async () => {
-    const message = fakeMessage();
-
-    const first = await mediaTools.execute(
-      null, message, 'generate_video', { prompt: 'a dog running' }, OWNER,
-    );
-    assert.match(first, /ALREADY POSTED/);
-    const afterFirst = calls.length;
-    assert.ok(afterFirst > 0, 'the first video should have reached the API');
-
-    const second = await mediaTools.execute(
-      null, message, 'generate_video', { prompt: 'a dog running again' }, OWNER,
-    );
-    assert.match(second, /^Error: /);
-    assert.match(second, /cap/);
-    assert.equal(calls.length, afterFirst, 'the refused attempt must not reach the API');
-  });
-}));
-
-test('a cap of 0 means unlimited', withDb(async () => {
-  db.setSetting('1', 'media_video_hourly_cap', 0);
-  const { fn } = videoFetch([
-    { status: 'completed', unsigned_urls: ['https://files.example/clip.mp4'] },
-  ]);
-  await withFetch(fn, async () => {
-    const message = fakeMessage();
-    for (let i = 0; i < 3; i += 1) {
-      // eslint-disable-next-line no-await-in-loop
-      const result = await mediaTools.execute(
-        null, message, 'generate_video', { prompt: 'a dog' }, OWNER,
-      );
-      assert.match(result, /ALREADY POSTED/);
-    }
-  });
-}));
-
-test('the "hang tight" notice is cleaned up after the clip is posted', withDb(async () => {
-  const { fn } = videoFetch([
-    { status: 'completed', unsigned_urls: ['https://files.example/clip.mp4'] },
-  ]);
-  await withFetch(fn, async () => {
-    const message = fakeMessage();
-    await mediaTools.execute(null, message, 'generate_video', { prompt: 'a dog' }, OWNER);
-    assert.equal(message._sent.length, 2, 'the notice, then the clip');
-    assert.match(String(message._sent[0]), /hang tight/);
-    assert.deepEqual(message._deleted, ['msg-1'], 'the notice should be deleted');
-    assert.equal(message._sent[1].files[0].name, 'generated_video.mp4');
-  });
-}));
-
-test('the notice is cleaned up even when generation fails', withDb(async () => {
   await withFetch(
-    async () => jsonResponse({ error: { message: 'upstream exploded' } }, 500),
+    async () => jsonResponse({ error: { message: 'boom' } }, 500),
     async () => {
-      const message = fakeMessage();
-      const result = await mediaTools.execute(
-        null, message, 'generate_video', { prompt: 'a dog' }, OWNER,
+      const second = await mediaTools.execute(
+        null, fakeMessage(), 'generate_video', { topic: 'cats' }, OWNER,
       );
-      assert.match(result, /^Error: /);
-      assert.deepEqual(message._deleted, ['msg-1'], 'a stale notice must not be left behind');
+      assert.doesNotMatch(second, /cap/);
     },
   );
 }));
 
-test('every registered tool has a schema of the same name', () => {
-  assert.deepEqual(
-    mediaTools.TOOL_SCHEMAS.map((s) => s.function.name).sort(),
-    Object.keys(mediaTools.TOOLS).sort(),
+// -- video: the Discord-side wiring, through a real script failure ----------
+//
+// A script-generation failure is fetch-based (unlike narration or ffmpeg),
+// so it's the one full-stack failure reachable here without faking anything
+// videomaker.js itself doesn't already fake internally.
+
+test('the status notice is posted, then cleaned up, when script generation fails', withDb(async () => {
+  await withFetch(
+    async () => jsonResponse({ error: { message: 'model unavailable' } }, 503),
+    async () => {
+      const message = fakeMessage();
+      const result = await mediaTools.execute(
+        null, message, 'generate_video', { topic: 'cats through history' }, OWNER,
+      );
+      assert.match(result, /^Error: /);
+      assert.match(result, /model unavailable/);
+      assert.equal(message._sent.length, 1, 'only the status notice, no clip');
+      assert.match(String(message._sent[0]), /writing the script/);
+      assert.deepEqual(message._deleted, ['msg-1'], 'the notice must not be left behind on failure');
+    },
   );
-  assert.ok(mediaTools.TOOL_SCHEMAS.every((s) => s.function.parameters.required.includes('prompt')));
+}));
+
+test('the hourly video cap refuses past the limit without posting a notice', withDb(async () => {
+  db.setSetting('1', 'media_video_hourly_cap', 1);
+  await withFetch(
+    async () => jsonResponse({ error: { message: 'boom' } }, 500),
+    async () => {
+      const message = fakeMessage();
+      await mediaTools.execute(null, message, 'generate_video', { topic: 'cats' }, OWNER);
+      const afterFirst = message._sent.length;
+      assert.ok(afterFirst > 0, 'the first attempt should have posted a notice');
+
+      const second = await mediaTools.execute(
+        null, message, 'generate_video', { topic: 'cats again' }, OWNER,
+      );
+      assert.match(second, /^Error: /);
+      assert.match(second, /cap/);
+      assert.equal(message._sent.length, afterFirst, 'the refused attempt must not post anything');
+    },
+  );
+}));
+
+test('every registered tool has a schema of the same name as its required params', () => {
+  const configured = mediaTools.TOOL_SCHEMAS.map((s) => s.function.name).sort();
+  assert.deepEqual(configured, ['generate_image', 'generate_video']);
+  const byName = Object.fromEntries(mediaTools.TOOL_SCHEMAS.map((s) => [s.function.name, s]));
+  assert.ok(byName.generate_image.function.parameters.required.includes('prompt'));
+  assert.ok(byName.generate_video.function.parameters.required.includes('topic'));
 });
 
 // ===========================================================================

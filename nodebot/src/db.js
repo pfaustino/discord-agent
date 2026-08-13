@@ -207,19 +207,19 @@ export const DEFAULTS = {
   // background/utility model override; null falls back to the env default
   ai_utility_model: null,
   // Image and video generation. Unlike everything else here, each use spends
-  // real money per generation, so access starts at the narrowest setting that
-  // is still useful: 'owner' means only OWNER_ID can ask for one, 'everyone'
-  // opens it to the whole server. Video is roughly ten times the cost of an
-  // image, so handing a busy server an unmetered button is a decision someone
-  // should make on purpose rather than inherit from a default.
+  // real money and/or ties up the local VideoMaker pipeline for many minutes,
+  // so access starts at the narrowest setting that is still useful: 'owner'
+  // means only OWNER_ID can ask for one, 'everyone' opens it to the whole
+  // server — a decision someone should make on purpose rather than inherit
+  // from a default.
   media_enabled: true,
   media_access: 'owner',
-  // Per-guild model pins. null means "use whatever OPENROUTER_IMAGE_MODEL /
-  // OPENROUTER_VIDEO_MODEL is set to" — mediaTools.js resolves the fallback at
-  // call time, deliberately not read here, so changing the env var moves every
-  // guild that hasn't chosen its own model.
+  // Per-guild image model pin. null means "use whatever OPENROUTER_IMAGE_MODEL
+  // is set to" — mediaTools.js resolves the fallback at call time, deliberately
+  // not read here, so changing the env var moves every guild that hasn't
+  // chosen its own model. videomaker.js's script/illustrations reuse this
+  // same pin for the image half of a video; there's no separate video model.
   media_image_model: null,
-  media_video_model: null,
   // Which model looks at pictures people post. Different axis from the two
   // above: those are generation endpoints, this one is the ordinary chat call
   // that happens to be handed an image, so null falls back to ai_model rather

@@ -33,12 +33,11 @@ export const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || 'anthropic/claud
 export const OPENROUTER_UTILITY_MODEL = process.env.OPENROUTER_UTILITY_MODEL || 'openrouter/free';
 // Spend breaker: hard cap on background model calls per hour (0 = uncapped).
 export const OPENROUTER_BG_HOURLY_CAP = parseInt(process.env.OPENROUTER_BG_HOURLY_CAP || '240', 10);
-// Image and video generation models. These are the deployment-wide defaults;
-// a guild that pins its own value in db.js DEFAULTS (media_image_model /
-// media_video_model) overrides them, and a guild that hasn't picks up whatever
-// is set here — so changing the env var moves every unpinned guild at once.
+// Image generation model. This is the deployment-wide default; a guild that
+// pins its own value in db.js DEFAULTS (media_image_model) overrides it, and
+// a guild that hasn't picks up whatever is set here — so changing the env
+// var moves every unpinned guild at once.
 export const OPENROUTER_IMAGE_MODEL = process.env.OPENROUTER_IMAGE_MODEL || 'google/gemini-2.5-flash-image';
-export const OPENROUTER_VIDEO_MODEL = process.env.OPENROUTER_VIDEO_MODEL || 'google/veo-3.1';
 
 // YouTube channel caption indexing via the channel-brains sidecar
 // (channelBrains.js). Opt-in: unset leaves the feature off and the model

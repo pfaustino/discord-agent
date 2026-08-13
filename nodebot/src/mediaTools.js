@@ -1,6 +1,9 @@
-// Image and video generation, exposed to the AI as tools. media.js does the
-// actual generating; this file decides who is allowed to spend money, how
-// much of it, and what the model is told once the file is in the channel.
+// Image and video generation, exposed to the AI as tools. media.js generates
+// images; videomaker.js generates video natively — script, per-scene images
+// and narration, FFmpeg assembly, all in this same process, all billed to
+// the one OPENROUTER_API_KEY this deployment already has. This file decides
+// who is allowed to spend money, how much of it, and what the model is told
+// once the file is in the channel.
 //
 // Unlike agentTools, the gate here is a per-guild setting rather than a
 // hardcoded owner check. Drawing a picture isn't a moderation action — it
@@ -12,12 +15,12 @@
 // would make that decision for them and there'd be no way to say otherwise.
 //
 // Video then gets its own breaker on top, because "who may spend" and "how
-// much may be spent" are separate problems. A video costs meaningfully more
-// than an image and takes minutes, so the model retrying a failed-looking
-// call — or one person asking four times because nothing appeared yet —
-// is a real bill, not a rounding error. The hourly cap is per guild and the
-// slot is claimed when the job STARTS, so a retry loop burns through the
-// cap instead of the budget.
+// much may be spent" are separate problems. Generating one takes several
+// sequential OpenRouter/TTS/ffmpeg steps, so the model retrying a
+// failed-looking call — or one person asking four times because nothing
+// appeared yet — burns real time and real money fast. The hourly cap is per
+// guild and the slot is claimed when the job STARTS, so a retry loop burns
+// through the cap instead of the budget.
 //
 // Handlers take (client, message, args) with the same relaxed `message`
 // contract agentTools uses: only .guild/.channel/.author are touched, so
@@ -25,6 +28,7 @@
 import { GuildPremiumTier } from 'discord.js';
 import * as db from './db.js';
 import * as media from './media.js';
+import * as videomaker from './videomaker.js';
 import { isOwner } from './utils.js';
 
 export class ToolError extends Error {}
@@ -106,8 +110,9 @@ export const _videoCalls = new Map();
 /** Claim an hourly video slot for this guild, or throw. Called before the
  * job is submitted rather than after it succeeds — a failing job still cost
  * money and still burned minutes, and a model that retries on failure would
- * otherwise be uncapped. cap 0 means unlimited. */
-function takeVideoSlot(guildId, cap, now = Date.now()) {
+ * otherwise be uncapped. cap 0 means unlimited. Exported for direct testing
+ * of the pure breaker logic, without needing a full video generation. */
+export function takeVideoSlot(guildId, cap, now = Date.now()) {
   const cutoff = now - HOUR_MS;
   const recent = (_videoCalls.get(guildId) || []).filter((at) => at > cutoff);
   if (cap > 0 && recent.length >= cap) {
@@ -128,7 +133,7 @@ async function generateImage(client, message, args) {
   const prompt = String(args.prompt || '').trim();
   if (!prompt) throw new ToolError('generate_image needs a prompt.');
 
-  const images = await media.generateImage(prompt, {
+  const { images } = await media.generateImage(prompt, {
     // null/empty means "no per-guild override" — let media.js fall back to
     // the model configured in the environment.
     model: db.getSetting(message.guild.id, 'media_image_model') || undefined,
@@ -158,42 +163,76 @@ async function generateImage(client, message, args) {
   return dropped ? `${note} (${dropped} more were too large to upload and were skipped.)` : note;
 }
 
+const STAGE_LABELS = {
+  script: 'Writing the script',
+  images: 'Illustrating scenes',
+  narration: 'Recording narration',
+  assemble: 'Rendering the final video',
+};
+
+function videoStatusLine(info) {
+  const label = STAGE_LABELS[info.stage] || info.stage;
+  const pct = Math.round((info.progress || 0) * 100);
+  const cost = info.costUsd ? ` — $${info.costUsd.toFixed(4)} so far` : '';
+  return `Generating video: ${label} (${pct}%)${cost}`;
+}
+
 async function generateVideo(client, message, args) {
-  const prompt = String(args.prompt || '').trim();
-  if (!prompt) throw new ToolError('generate_video needs a prompt.');
+  const topic = String(args.topic || '').trim();
+  if (!topic) throw new ToolError('generate_video needs a topic.');
 
   const guildId = message.guild.id;
   takeVideoSlot(guildId, Number(db.getSetting(guildId, 'media_video_hourly_cap')) || 0);
 
-  // Minutes of silence reads as a hung bot, so say something up front — and
-  // clear it afterwards either way, so the channel isn't left with a stale
-  // "hang tight" sitting above a finished clip or a failure message.
+  // Several sequential steps means minutes of silence, which reads as a hung
+  // bot — say something up front and keep it live-updated with
+  // stage/progress/cost as they're reported, then clear it either way, so
+  // the channel isn't left with a stale status line sitting above a
+  // finished clip or a failure message.
   let notice = null;
   try {
-    notice = await message.channel.send('Generating video — this takes a few minutes, hang tight.');
+    notice = await message.channel.send('Starting video: writing the script — this typically '
+      + "takes a few minutes, I'll keep this updated.");
   } catch (err) {
     console.warn('[mediaTools] could not post the video notice:', err.message);
   }
+  const updateNotice = async (info) => {
+    if (!notice) return;
+    try {
+      await notice.edit(videoStatusLine(info));
+    } catch (err) {
+      console.warn('[mediaTools] could not update the video notice:', err.message);
+    }
+  };
 
   try {
-    const clip = await media.generateVideo(prompt, {
-      model: db.getSetting(guildId, 'media_video_model') || undefined,
-      duration: args.duration ? Number(args.duration) : undefined,
-      resolution: args.resolution,
-      aspectRatio: args.aspect_ratio,
-    });
+    let clip;
+    try {
+      clip = await videomaker.createVideo(topic, {
+        guildId,
+        notes: args.notes,
+        imageModel: db.getSetting(guildId, 'media_image_model') || undefined,
+        onStatus: updateNotice,
+      });
+    } catch (err) {
+      if (err instanceof videomaker.VideoMakerError) throw new ToolError(err.message);
+      throw err;
+    }
 
     const limit = uploadLimit(message.guild);
     if (clip.data.length > limit) {
-      return tooLarge(clip.data.length, limit, 'regenerate it with a shorter duration or a lower resolution');
+      return tooLarge(clip.data.length, limit, 'ask for a shorter video — fewer scenes or less narration');
     }
+    const title = String(clip.title || 'generated_video')
+      .toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 60) || 'generated_video';
     await message.channel.send({
-      files: [{
-        attachment: clip.data,
-        name: `generated_video.${extension(clip.contentType, 'mp4')}`,
-      }],
+      files: [{ attachment: clip.data, name: `${title}.${extension(clip.contentType, 'mp4')}` }],
     });
-    return postedNote(1, 'video');
+    const cost = clip.costUsd
+      ? ` It cost $${clip.costUsd.toFixed(4)} to make (script + illustrations via OpenRouter — `
+        + 'you may mention this if asked).'
+      : '';
+    return `${postedNote(1, 'video')}${cost}`;
   } finally {
     if (notice) {
       await notice.delete().catch(() => { /* already gone, or no permission */ });
@@ -220,20 +259,18 @@ export const TOOLS = {
       n: int(`How many variations to generate (1-${media.IMAGE_MAX_N}, default 1)`),
     }, ['prompt']), generateImage],
   generate_video: [schema('generate_video',
-    'Generate a short video clip and post it in the channel. This takes several minutes and costs '
-    + 'far more than an image, so use it ONLY when someone actually asks for a video, clip, '
-    + 'animation, or something moving. Never generate one as a bonus alongside an image, and never '
-    + 'to illustrate a point nobody asked to see animated — if an image would answer the request, '
-    + 'use generate_image instead. Write a specific prompt describing the subject, the motion, the '
-    + 'camera, and the style.',
+    'Generate a narrated video — a script written and read aloud over a sequence of illustrated '
+    + 'scenes, assembled into one video — and post it in the channel. This takes a few minutes '
+    + '(several sequential steps: script, illustrations, narration, assembly) and costs real money, '
+    + 'so use it ONLY when someone actually asks for a video. Never generate one as a bonus '
+    + 'alongside an image, and never to illustrate a point nobody asked to see as a video — if an '
+    + 'image would answer the request, use generate_image instead. Give it a clear, specific topic; '
+    + 'it writes its own script from that.',
     {
-      prompt: str('The full video prompt: subject, what moves and how, camera movement, style and '
-        + 'lighting. Be specific.'),
-      duration: int('Clip length in seconds (keep it short — longer clips cost more and may be too '
-        + 'large to upload)'),
-      resolution: str("Resolution such as '480p', '720p', or '1080p' (optional)"),
-      aspect_ratio: ASPECT_RATIO,
-    }, ['prompt']), generateVideo],
+      topic: str('The video topic/subject, written specifically — this drives the whole script.'),
+      notes: str('Optional extra guidance for the script: tone, style, facts to include, angle to '
+        + "take. Leave blank unless the user actually said something beyond the topic itself."),
+    }, ['topic']), generateVideo],
 };
 
 export const TOOL_SCHEMAS = Object.values(TOOLS).map(([s]) => s);

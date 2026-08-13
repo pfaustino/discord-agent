@@ -936,9 +936,6 @@ async function renderSettings() {
             <label class="field"><span class="lbl">Image model</span>
               <input id="s-media_image_model" value="${esc(settings.media_image_model || "")}"
                 placeholder="google/gemini-2.5-flash-image"></label>
-            <label class="field"><span class="lbl">Video model</span>
-              <input id="s-media_video_model" value="${esc(settings.media_video_model || "")}"
-                placeholder="google/veo-3.1"></label>
             <label class="field"><span class="lbl">Vision model — reads pictures people post</span>
               <input id="s-media_vision_model" value="${esc(settings.media_vision_model || "")}"
                 placeholder="${esc(settings.ai_model || "")}">
@@ -947,11 +944,12 @@ async function renderSettings() {
                 Worth setting when that model can't read images.</span></label>
             <label class="field"><span class="lbl">Videos per hour, server-wide (0 = no cap)</span>
               <input id="s-media_video_hourly_cap" type="number" min="0" value="${settings.media_video_hourly_cap ?? 5}"></label>
-            <span class="muted">Every image and every clip is billed against this instance's
-              OpenRouter credit, and video costs far more than images — roughly ten times per
-              request. Leave the models blank to follow whatever this instance is configured
-              to use. Opening this to <strong>everyone</strong> hands the whole server a button
-              that spends real money, so the hourly video cap is the safety net.</span>
+            <span class="muted">Every image and every video is billed against this instance's
+              OpenRouter credit — leave the image model blank to follow whatever this instance is
+              configured to use. A video is a script plus several illustrations plus narration
+              plus assembly, all in one request, so it costs meaningfully more and takes a few
+              minutes; the hourly cap is the safety net. Opening either to
+              <strong>everyone</strong> hands the whole server a button that spends real money.</span>
           </div>
         </section>
 
@@ -1141,7 +1139,6 @@ async function renderSettings() {
       media_enabled: $("#s-media_enabled").checked,
       media_access: $("#s-media_access").value,
       media_image_model: $("#s-media_image_model").value.trim(),
-      media_video_model: $("#s-media_video_model").value.trim(),
       media_vision_model: $("#s-media_vision_model").value.trim(),
       media_video_hourly_cap: parseInt($("#s-media_video_hourly_cap").value, 10) || 0,
       pressure_enabled: $("#s-pressure_enabled").checked,

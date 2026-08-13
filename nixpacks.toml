@@ -6,7 +6,10 @@
 #                   built into Node 22, so there is no native sqlite to
 #                   compile). See NODE_OPTIONS below: "built in" does not mean
 #                   "switched on" at the version this resolves to.
-# ffmpeg          — TTS playback via prism-media
+# ffmpeg          — TTS playback via prism-media, and video assembly for the
+#                   generate_video tool (videomaker.js): stills + narration
+#                   get muxed into scene clips and concatenated into one mp4,
+#                   entirely on this container — no other machine involved.
 # build-essential — gcc/g++/make/libc6-dev, and
 # python3           python3 for node-gyp's configure step. BUILD-only: nothing
 #                   Python runs at runtime, the dormant Python tree stays

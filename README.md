@@ -33,6 +33,13 @@ tools, wake pipeline, prompts, models, limitations, roadmap)
 - Repo sandbox (E2B): **not available.** This existed in the Python bot and was
   deliberately not carried over to Node — it never worked well in practice.
   `E2B_API_KEY` and `GITHUB_WRITE_TOKEN` are unused.
+- Image and video generation: images via OpenRouter; video is a full
+  narrated pipeline — script, per-scene illustrations, per-scene narration
+  (Fish Audio/Edge TTS), FFmpeg assembly into one mp4 — that runs natively
+  in this same process on whatever billed the OpenRouter key, not a
+  separate app or machine. Gated per-guild (owner-only or everyone) with an
+  hourly cap on video specifically, since it costs and takes noticeably
+  more than an image.
 - Document review: drop a file on a message that mentions the bot (or in
   an always-on AI channel) — text, markdown, code, PDFs, and Word docs are
   read automatically and folded into the conversation so the bot can
