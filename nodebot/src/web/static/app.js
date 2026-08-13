@@ -875,6 +875,21 @@ async function renderSettings() {
             <label class="field"><span class="lbl">Max mentions per message (0 = off)</span>
               <input id="s-max_mentions" type="number" min="0" value="${settings.max_mentions || 0}"></label>
           </div>
+          <div class="section-title">Cross-channel spam ban</div>
+          <div class="card">
+            <label class="toggle"><input type="checkbox" id="s-antispam_enabled"
+              ${settings.antispam_enabled ? "checked" : ""}> Auto-ban members blasting the same
+              message across channels (recent messages are deleted server-wide on the ban)</label>
+            <label class="field"><span class="lbl">Channels within the window to trigger a ban</span>
+              <input id="s-antispam_channel_threshold" type="number" min="2"
+                value="${settings.antispam_channel_threshold || 4}"></label>
+            <label class="field"><span class="lbl">Window (seconds)</span>
+              <input id="s-antispam_window_seconds" type="number" min="1"
+                value="${settings.antispam_window_seconds || 20}"></label>
+            <label class="field"><span class="lbl">Message history to delete on ban (seconds, max 604800)</span>
+              <input id="s-antispam_delete_seconds" type="number" min="0" max="604800"
+                value="${settings.antispam_delete_seconds || 3600}"></label>
+          </div>
         </section>
 
         <section class="settings-panel ${activeTab === "access" ? "active" : ""}" data-panel="access">
@@ -1116,6 +1131,10 @@ async function renderSettings() {
       block_invites: $("#s-block_invites").checked,
       banned_words: $("#s-banned_words").value.split(",").map((w) => w.trim()).filter(Boolean),
       max_mentions: parseInt($("#s-max_mentions").value, 10) || 0,
+      antispam_enabled: $("#s-antispam_enabled").checked,
+      antispam_channel_threshold: parseInt($("#s-antispam_channel_threshold").value, 10) || 4,
+      antispam_window_seconds: parseInt($("#s-antispam_window_seconds").value, 10) || 20,
+      antispam_delete_seconds: parseInt($("#s-antispam_delete_seconds").value, 10) || 0,
       ai_enabled: $("#s-ai_enabled").checked,
       ai_model: $("#s-ai_model").value.trim(),
       ai_utility_model: $("#s-ai_utility_model").value.trim(),

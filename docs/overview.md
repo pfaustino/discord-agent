@@ -14,7 +14,10 @@ server he's in, who's around, and what his own commands can do.
 **Manages the server.** Kick, ban, timeout, warn, purge, slowmode, lock;
 create/delete channels (text, voice, category, forum) and roles; welcome
 messages; automod with banned words, invite blocking, and mention-spam
-limits. The owner can just *tell Max* what to do in plain language — he has
+limits; a cross-channel spam ban that auto-bans (and purges the recent
+messages of) a member blasting the same message into several channels at
+once, the usual sign of a hijacked account. The owner can just *tell Max*
+what to do in plain language — he has
 direct tools for all of it. Everyone else gets pointed to the slash
 commands.
 

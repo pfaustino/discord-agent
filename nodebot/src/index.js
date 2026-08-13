@@ -5,6 +5,7 @@ import { loadCommands } from './load-commands.js';
 import { handleMessage } from './textChat.js';
 import * as voice from './voice.js';
 import * as automod from './automod.js';
+import * as antispam from './antispam.js';
 import * as welcome from './welcome.js';
 import * as memory from './memory.js';
 import * as proactive from './proactive.js';
@@ -96,6 +97,11 @@ client.on(Events.MessageCreate, async (message) => {
     await automod.checkMessage(message);
   } catch (err) {
     console.error('automod check failed:', err);
+  }
+  try {
+    await antispam.checkMessage(message);
+  } catch (err) {
+    console.error('antispam check failed:', err);
   }
   try {
     await handleMessage(client, message);

@@ -99,6 +99,12 @@ tools, wake pipeline, prompts, models, limitations, roadmap)
   on the dashboard is exactly what gets compared.
 - Welcome/goodbye messages + autorole for new members
 - Automod: banned words, invite-link blocking, mention-spam limits
+- Cross-channel spam ban: a member posting the same message (or attachment
+  burst) into several channels within a short window — the signature of a
+  compromised account blasting the server — is auto-banned, with their
+  recent messages deleted server-wide as part of the ban. On by default;
+  thresholds configurable per server. Staff (Manage Messages) are exempt.
+  `/unban` once they've secured their account.
 - Mod log channel + persistent action history
 
 **Credits** (only when run as a service — see below)

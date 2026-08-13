@@ -185,6 +185,18 @@ export const DEFAULTS = {
   banned_words: [],
   block_invites: false,
   max_mentions: 0,
+  // cross-channel spam ban: a member blasting the same message/attachment
+  // into several channels within a short window gets auto-banned and their
+  // recent messages purged server-wide (deleteMessageSeconds on the ban
+  // itself, not a per-channel purge). The usual trigger is a compromised
+  // account, not a malicious member, so this is a ban (reversible with
+  // /unban) rather than anything more permanent. On by default, unlike the
+  // rest of automod, since a hacked account blasting every channel is
+  // damage every server wants stopped immediately.
+  antispam_enabled: true,
+  antispam_channel_threshold: 4,
+  antispam_window_seconds: 20,
+  antispam_delete_seconds: 3600,
   // proactive speech (pressure engine) — off until deliberately enabled,
   // same as the Python bot: speaking unprompted is opt-in per guild.
   pressure_enabled: false,

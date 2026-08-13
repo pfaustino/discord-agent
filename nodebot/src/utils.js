@@ -28,6 +28,8 @@ const ACTION_COLORS = {
   untimeout: 0x23A559,
   warn: 0xF0B232,
   purge: 0x5865F2,
+  antispam_ban: 0xDA373C,
+  antispam_flag: 0xF0B232,
 };
 
 /** Record a moderation action to the DB and, if a log channel is set, post
