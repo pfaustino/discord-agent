@@ -53,10 +53,9 @@ export const CHANNEL_BRAINS_SOURCE = process.env.CHANNEL_BRAINS_SOURCE || '';
 export const GITHUB_TOKEN = process.env.GITHUB_TOKEN || '';
 export const GITHUB_REPO = process.env.GITHUB_REPO || 'seed0001/discord-agent';
 
-// Web search: duck-duck-scrape is blocked from most cloud/datacenter IPs
-// (Railway included). BRAVE_SEARCH_API_KEY enables full Brave Web Search;
-// without it, web_search falls back to DuckDuckGo's limited instant-answer API.
-export const BRAVE_SEARCH_API_KEY = process.env.BRAVE_SEARCH_API_KEY || '';
+// Web search: Tavily (tavily.com). Without a key, web_search reports itself
+// unavailable rather than silently degrading.
+export const TAVILY_API_KEY = process.env.TAVILY_API_KEY || '';
 
 // Speech-to-text: any OpenAI-compatible /audio/transcriptions endpoint
 // (OpenAI Whisper, Groq, ...) — same env vars as the Python bot.

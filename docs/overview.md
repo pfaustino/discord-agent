@@ -45,7 +45,7 @@ versa. He watches every text channel, not just the ones he's mentioned in
 or configured to always reply in — post something anywhere and ask him
 about it later from a totally different channel or from voice.
 
-**Looks things up.** Web search (DuckDuckGo) and GitHub repo analysis —
+**Looks things up.** Web search (Tavily) and GitHub repo analysis —
 drop a repo link and he'll pull its stats, languages, and README and
 actually discuss it.
 

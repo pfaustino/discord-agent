@@ -66,7 +66,7 @@ export const CAPABILITY_PROMPT = (
   + 'someone has walked you through before, and kb_save it once you have '
   + 'learned one, so nobody has to explain it twice.\n\n'
 
-  + 'LOOKING THINGS UP. web_search (DuckDuckGo) for current events, docs, or '
+  + 'LOOKING THINGS UP. web_search (Tavily) for current events, docs, or '
   + 'anything you are unsure about. github_repo pulls any public repository\'s '
   + 'description, stats, languages and README — and when someone shares a '
   + 'GitHub link, that is attached to their message automatically, so dig in '

@@ -186,7 +186,7 @@ const GROUPS = [
         name: 'Web search',
         tier: 'core',
         builder: true,
-        detail: 'DuckDuckGo lookups folded into the answer, mid-conversation.',
+        detail: 'Tavily lookups folded into the answer, mid-conversation.',
       },
       {
         id: 'repo-analysis',

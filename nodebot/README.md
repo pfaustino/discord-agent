@@ -44,7 +44,7 @@ is ready, it takes over and the Python code goes away.
   (needed for voice's cancel words to actually stop an in-flight reply),
   and an `onToolCalls` hook awaited once before the first round of tool
   calls actually executes (voice.js uses it for the "on it" heads-up)
-- `src/tools.js` — general AI-callable tools: `web_search` (DuckDuckGo) so
+- `src/tools.js` — general AI-callable tools: `web_search` (Tavily) so
   far; GitHub/sandbox tools follow once their own identity/write pieces
   exist here
 - `src/agentTools.js` — the owner's *management* tools, ported wholesale
@@ -182,13 +182,12 @@ same log entries) are tested directly.
 
 A couple of things can't be exercised live from this sandbox and are
 tested via dependency injection / mocked fetch instead, noted in the test
-files themselves: `duckduckgo.com` is blocked by this environment's
-network egress allowlist (confirmed via a raw fetch returning 403 "Host
-not in allowlist" — a testing-environment restriction, not a bug, same
-category as an earlier restriction hit calling api.github.com and
-discord.com directly), and OpenRouter itself isn't called live either
-(tests set a fake `OPENROUTER_API_KEY` and mock global `fetch` to test the
-loop's control flow, not real API reachability).
+files themselves: `api.tavily.com` is blocked by this environment's
+network egress allowlist (same category of restriction hit earlier
+calling api.github.com and discord.com directly), and OpenRouter itself
+isn't called live either (tests set a fake `OPENROUTER_API_KEY` and mock
+global `fetch` to test the loop's control flow, not real API
+reachability).
 
 ## Known gaps in this layer, on purpose
 

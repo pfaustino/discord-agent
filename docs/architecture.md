@@ -103,6 +103,6 @@ All SQLite files live on the Railway volume and survive redeploys.
 ## External services
 
 OpenRouter (chat + tool calls), an OpenAI-compatible transcription API
-(OpenAI or Groq), Fish Audio (TTS, optional), DuckDuckGo (search), GitHub
+(OpenAI or Groq), Fish Audio (TTS, optional), Tavily (search), GitHub
 API (repo analysis). All keys via environment variables — see
 `operations.md`.
