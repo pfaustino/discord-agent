@@ -44,7 +44,15 @@
 #             the feature is off and uv just sits there unused; with it set,
 #             uvx builds the sidecar env on first call (slow once per deploy)
 #             and fetches its own managed CPython.
+#
+# nixpkgsArchive is pinned because Nixpacks' auto-selected archive briefly
+# stopped defining nodejs_22 (`error: undefined variable 'nodejs_22'`), which
+# failed the build outright before an image was ever produced — same failure
+# mode as the Python-toolchain incident above, just from Nixpacks' side this
+# time. ac62194c... is the nixos-25.05 branch head; confirmed to define
+# nodejs_22 directly (not just nodejs -> nodejs_22 aliasing that can move).
 [phases.setup]
+nixpkgsArchive = "ac62194c3917d5f474c1a844b6fd6da2db95077d"
 nixPkgs = ["nodejs_22", "uv"]
 aptPkgs = ["ffmpeg", "build-essential", "python3"]
 
