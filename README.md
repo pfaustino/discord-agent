@@ -4,9 +4,8 @@ A Node.js Discord bot that manages your server end-to-end, with a mobile-friendl
 dashboard and AI chat powered by OpenRouter. Designed to deploy on Railway from GitHub
 as a single service (bot + dashboard + voice in one process).
 
-The bot lives in [`nodebot/`](nodebot/). The Python tree at the repo root is the
-previous implementation, kept for reference until it's deleted — it is never
-installed and never started.
+The bot lives in [`nodebot/`](nodebot/). The previous Python implementation
+that used to live at the repo root has been deleted.
 
 Docs: [overview](docs/overview.md) · [architecture](docs/architecture.md) ·
 [voice pipeline](docs/voice-pipeline.md) · [operations](docs/operations.md) ·

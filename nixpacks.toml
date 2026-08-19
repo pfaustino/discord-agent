@@ -1,6 +1,6 @@
 # Node.js runtime. The whole bot is nodebot/ — text chat, voice (DAVE E2EE
 # via @snazzah/davey), moderation, automod, welcome, and the AI tool loop.
-# The Python tree is dormant: still in the repo, never installed or started.
+# The old Python tree that used to live at the repo root has been deleted.
 #
 # nodejs_22       — required by nodebot (node:sqlite, used by src/db.js, is
 #                   built into Node 22, so there is no native sqlite to
@@ -12,8 +12,8 @@
 #                   entirely on this container — no other machine involved.
 # build-essential — gcc/g++/make/libc6-dev, and
 # python3           python3 for node-gyp's configure step. BUILD-only: nothing
-#                   Python runs at runtime, the dormant Python tree stays
-#                   uninstalled.
+#                   Python runs at runtime; there is no Python tree in the
+#                   repo anymore.
 #
 # The toolchain is not optional. @discordjs/opus installs via
 # `node-pre-gyp install --fallback-to-build`, and it publishes no prebuild
@@ -33,18 +33,17 @@
 # These go in aptPkgs, not nixPkgs, deliberately: the Nixpacks base image is
 # Debian, so Debian's own gcc/glibc headers are self-consistent, where a Nix
 # gcc resolving against a Debian base is a known source of build breakage.
-# Listing them explicitly also means they survive deleting the Python tree.
 #
 # Overriding [phases.install] replaces Nixpacks' auto-detected pip install
-# (root requirements.txt still makes it detect a Python app), so no Python
-# dependencies are installed.
+# step, which no longer has anything to detect now that the root
+# requirements.txt is gone — this override just keeps the install phase
+# scoped to nodebot/.
 # uv        — runtime, not build: channelBrains.js shells out to
 #             `uvx --from $CHANNEL_BRAINS_SOURCE channel-brains` per tool
 #             call. Without CHANNEL_BRAINS_SOURCE set in Railway variables
 #             the feature is off and uv just sits there unused; with it set,
 #             uvx builds the sidecar env on first call (slow once per deploy)
-#             and fetches its own managed CPython, so the dormant Python
-#             tree stays uninstalled either way.
+#             and fetches its own managed CPython.
 [phases.setup]
 nixPkgs = ["nodejs_22", "uv"]
 aptPkgs = ["ffmpeg", "build-essential", "python3"]
