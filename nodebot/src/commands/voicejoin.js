@@ -25,6 +25,13 @@ export async function execute(interaction) {
     return;
   }
   await interaction.deferReply({ ephemeral: true });
-  await joinRequestedChannel(state.channel);
+  const joined = await joinRequestedChannel(state.channel);
+  if (!joined) {
+    await interaction.editReply(
+      `I'm not allowed to join **${state.channel.name}** — it's not on this server's list of ` +
+      'allowed voice channels. An admin can change that from the dashboard (Voice detection settings).',
+    );
+    return;
+  }
   await interaction.editReply(`Listening in **${state.channel.name}**.`);
 }

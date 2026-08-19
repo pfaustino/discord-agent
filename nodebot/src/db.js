@@ -141,6 +141,12 @@ export const DEFAULTS = {
   // dashboard has always offered this control; without the key here the
   // settings PUT rejected it and the whole Settings tab failed to save.
   ai_channels: [],
+  // Voice channels the bot is allowed to join/listen in. Empty = no
+  // restriction (same "empty list means unrestricted" convention as
+  // ai_channels above) — set this to narrow the bot down to one or two
+  // channels on a server that doesn't want it roaming into every voice
+  // channel. Enforced in voice.js's joinChannel().
+  voice_channel_allowlist: [],
   voice_wake_words: VOICE_WAKE_WORDS,
   voice_cancel_words: VOICE_CANCEL_WORDS,
   // Follow-up mode: for this many seconds after Max finishes speaking,

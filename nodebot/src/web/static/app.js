@@ -795,6 +795,7 @@ async function renderSettings() {
     api(`/guilds/${state.guildId}/soundboard`).catch(() => []),
   ]);
   const textChannels = channels.filter((c) => c.type === "text");
+  const voiceChannelList = channels.filter((c) => c.type === "voice");
   // Bot/integration-managed roles can't be handed out to people, so they're
   // no use as a dashboard-access group.
   const allRoles = roles.filter((r) => !r.managed);
@@ -954,6 +955,15 @@ async function renderSettings() {
         </section>
 
         <section class="settings-panel ${activeTab === "voice-detect" ? "active" : ""}" data-panel="voice-detect">
+          <div class="section-title">Allowed voice channels</div>
+          <div class="card">
+            <label class="field"><span class="lbl">Channels the bot may join</span>
+              <select id="s-voice_channel_allowlist" multiple size="5">${voiceChannelList.map((c) =>
+                `<option value="${c.id}" ${(settings.voice_channel_allowlist || []).map(String).includes(c.id) ? "selected" : ""}>${esc(c.name)}</option>`).join("")}</select>
+              <span class="muted">${voiceChannelList.length ? "" : "<em>No voice channels found in this server.</em> "}
+              Leave empty to allow any voice channel. Select one or more to narrow the bot down to
+              just those — it won't auto-join or accept <code>/voicejoin</code> into anything else.</span></label>
+          </div>
           <div class="section-title">Voice detection</div>
           <div class="card">
             <label class="field"><span class="lbl">Detection mode</span>
@@ -1145,6 +1155,7 @@ async function renderSettings() {
       deesc_enabled: $("#s-deesc_enabled").checked,
       deesc_harsh_language: $("#s-deesc_harsh_language").checked,
       ai_channels: [...$("#s-ai_channels").selectedOptions].map((o) => o.value),
+      voice_channel_allowlist: [...$("#s-voice_channel_allowlist").selectedOptions].map((o) => o.value),
       dashboard_admin_roles: [...$("#s-dashboard_admin_roles").selectedOptions].map((o) => o.value),
       dashboard_mod_roles: [...$("#s-dashboard_mod_roles").selectedOptions].map((o) => o.value),
       // Sent as the raw field text; the server parses the brackets (and still

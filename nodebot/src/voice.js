@@ -159,6 +159,12 @@ function voiceChannels(guild) {
   return guild.channels.cache.filter((c) => c.type === ChannelType.GuildVoice);
 }
 
+/** Empty allowlist = unrestricted (same convention as ai_channels). */
+function isChannelAllowed(channel) {
+  const allowlist = db.getSetting(channel.guild.id, 'voice_channel_allowlist') || [];
+  return allowlist.length === 0 || allowlist.includes(channel.id);
+}
+
 export function matchesAny(text, words) {
   // Both sides get normalized. Normalizing only the transcript — which this
   // did until phrases could contain punctuation — meant any phrase with a
@@ -176,6 +182,10 @@ export function matchesAny(text, words) {
 // -- join/leave/rebalance (ported from listener/index.js) -------------------
 
 async function joinChannel(channel) {
+  if (!isChannelAllowed(channel)) {
+    console.log(`[voice] refusing to join #${channel.name} (${channel.id}) — not in voice_channel_allowlist`);
+    return false;
+  }
   console.log(`[voice] joining #${channel.name} (${channel.id})`);
   const connection = joinVoiceChannel({
     channelId: channel.id,
@@ -203,7 +213,7 @@ async function joinChannel(channel) {
   } catch (err) {
     console.error(`[voice] failed to become ready in #${channel.name}:`, err.message);
     connection.destroy();
-    return;
+    return false;
   }
   console.log(`[voice] listening in #${channel.name}`);
   const wakeWords = voicePhrases(channel.client, channel.guild.id, 'voice_wake_words');
@@ -213,6 +223,7 @@ async function joinChannel(channel) {
   } catch (err) {
     console.warn('[voice] join announcement failed:', err.message);
   }
+  return true;
 }
 
 function leaveGuild(guild) {
@@ -265,7 +276,7 @@ async function rebalance(guild) {
   const current = connection && guild.channels.cache.get(connection.joinConfig.channelId);
   if (connection && current && humanCount(current) > 0) return; // stay put
   const occupied = voiceChannels(guild)
-    .filter((c) => humanCount(c) > 0)
+    .filter((c) => humanCount(c) > 0 && isChannelAllowed(c))
     .sort((a, b) => humanCount(b) - humanCount(a));
   if (connection) leaveGuild(guild);
   const target = occupied.first();
@@ -712,11 +723,14 @@ export async function speakInVoice(guild, text) {
 
 // -- owner control (join/leave a specific channel) ---------------------------
 
+/** Returns false if the channel isn't in voice_channel_allowlist, so the
+ * caller (the /voicejoin command) can tell the requester why nothing happened. */
 export async function joinRequestedChannel(channel) {
+  if (!isChannelAllowed(channel)) return false;
   manualHold.set(channel.guild.id, channel.id);
   const existing = getVoiceConnection(channel.guild.id);
   if (existing) leaveGuild(channel.guild);
-  await joinChannel(channel);
+  return joinChannel(channel);
 }
 
 export function leaveRequestedGuild(guild) {
