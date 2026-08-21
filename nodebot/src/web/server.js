@@ -172,33 +172,47 @@ function getMember(guild, userId) {
 }
 
 /**
- * What dashboard access a Discord user gets, read from the server itself.
+ * What dashboard access a Discord user gets IN ONE SPECIFIC GUILD, read from
+ * that server itself.
  *
  * The roles come from the bot's own gateway connection, never from anything
  * the browser sent — the OAuth flow establishes *who* someone is, and this
- * decides what that's worth here. One instance runs one server, but the loop
- * is over guilds anyway so a bot sitting in a test server as well behaves
- * sensibly: the best level found wins.
+ * decides what that's worth in this particular server. This bot instance
+ * runs many servers at once (unlike roles.js's own single-server framing),
+ * so this is deliberately NOT cached on the session — every request to a
+ * guild-scoped route re-derives the level from that guild's live roles, so
+ * being a moderator in one server never bleeds into another.
+ */
+async function levelForUserInGuild(guild, userId) {
+  if (OWNER_ID && String(userId) === String(OWNER_ID)) return 'creator';
+  let member = guild.members.cache.get(String(userId));
+  if (!member) {
+    try {
+      member = await guild.members.fetch(String(userId));
+    } catch {
+      return 'none'; // not a member of this guild
+    }
+  }
+  return resolveLevel({
+    ...memberFacts(member, PermissionsBitField),
+    ownerId: OWNER_ID,
+    adminRoles: db.getSetting(guild.id, 'dashboard_admin_roles') || [],
+    modRoles: db.getSetting(guild.id, 'dashboard_mod_roles') || [],
+  });
+}
+
+/**
+ * The BEST access a Discord user has anywhere this instance runs, checked
+ * once at login time to decide whether they get a dashboard session at all.
+ * Deliberately not trusted for anything past that: see levelForUserInGuild,
+ * which every guild-scoped request re-checks instead.
  */
 async function levelForUser(client, userId) {
   if (OWNER_ID && String(userId) === String(OWNER_ID)) return 'creator';
   let best = 'none';
   for (const guild of client.guilds.cache.values()) {
-    let member = guild.members.cache.get(String(userId));
-    if (!member) {
-      try {
-        // eslint-disable-next-line no-await-in-loop
-        member = await guild.members.fetch(String(userId));
-      } catch {
-        continue; // not in this server
-      }
-    }
-    const level = resolveLevel({
-      ...memberFacts(member, PermissionsBitField),
-      ownerId: OWNER_ID,
-      adminRoles: db.getSetting(guild.id, 'dashboard_admin_roles') || [],
-      modRoles: db.getSetting(guild.id, 'dashboard_mod_roles') || [],
-    });
+    // eslint-disable-next-line no-await-in-loop
+    const level = await levelForUserInGuild(guild, userId);
     if (LEVELS[level] > LEVELS[best]) best = level;
   }
   return best;
@@ -316,12 +330,26 @@ function buildRoutes(client) {
       return { ok: true };
     }, { level: 'creator' }],
 
-    ['GET', '/api/guilds', async () => client.guilds.cache.map((g) => ({
-      id: String(g.id),
-      name: g.name,
-      icon: g.iconURL(),
-      member_count: g.memberCount,
-    })), { level: 'moderator' }],
+    ['GET', '/api/guilds', async ({ session }) => {
+      // Creator sees every server this instance runs (that's the instance
+      // owner's job); anyone else only sees servers they actually have
+      // dashboard access in — otherwise this list alone would leak the name,
+      // icon, and member count of every server the bot is installed in to
+      // any moderator signed in from anywhere.
+      let guilds = [...client.guilds.cache.values()];
+      if (session.level !== 'creator') {
+        const checked = await Promise.all(
+          guilds.map(async (g) => [g, await levelForUserInGuild(g, session.userId)]),
+        );
+        guilds = checked.filter(([, level]) => levelAtLeast(level, 'moderator')).map(([g]) => g);
+      }
+      return guilds.map((g) => ({
+        id: String(g.id),
+        name: g.name,
+        icon: g.iconURL(),
+        member_count: g.memberCount,
+      }));
+    }, { level: 'moderator' }],
 
     ['GET', '/api/guilds/:guildId', async ({ params }) => {
       const g = getGuild(client, params.guildId);
@@ -877,6 +905,31 @@ export function createDashboard(client) {
               detail: `This needs ${required} access — you are signed in as ${session.level}.`,
             });
             return;
+          }
+          // session.level is the BEST access this user has anywhere the bot
+          // runs (computed once at login) — enough to gate bot-wide routes,
+          // but not enough on its own for a route naming a specific guild:
+          // a moderator in one server must not reach into another server's
+          // members, settings, or mod actions just by outranking the route's
+          // minimum level globally. Re-derive their level from THAT guild's
+          // own live roles instead. Creator (the instance owner, or the
+          // password break-glass login) is exempt — that access is
+          // deliberately instance-wide, not guild-scoped.
+          if (params.guildId && session.level !== 'creator') {
+            const targetGuild = client.guilds.cache.get(String(params.guildId));
+            if (!targetGuild) {
+              sendJson(res, 404, { detail: 'Guild not found' });
+              return;
+            }
+            const scoped = await levelForUserInGuild(targetGuild, session.userId);
+            if (!levelAtLeast(scoped, required)) {
+              sendJson(res, 403, {
+                detail: scoped === 'none'
+                  ? "You don't have dashboard access in this server."
+                  : `This needs ${required} access in this server — you are ${scoped}.`,
+              });
+              return;
+            }
           }
         }
         const body = ['POST', 'PUT', 'PATCH'].includes(method) ? await readBody(req) : {};

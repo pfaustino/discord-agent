@@ -7,6 +7,7 @@ import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { PermissionsBitField } from 'discord.js';
 import { createDashboard, matchRoute } from '../src/web/server.js';
 import { createToken, verifyToken, checkPassword } from '../src/web/auth.js';
 import * as db from '../src/db.js';
@@ -21,7 +22,26 @@ const collection = (entries) => {
   return map;
 };
 
-function fakeClient() {
+// A member with the given Discord permission flags, for exercising the
+// dashboard's per-guild access check (levelForUserInGuild in server.js),
+// which re-derives access from live guild membership rather than trusting
+// whatever level a session cookie claims.
+function fakeMember(id, flags = []) {
+  return {
+    id,
+    user: { id, username: `user-${id}`, bot: false },
+    displayName: `user-${id}`,
+    displayAvatarURL: () => 'http://avatar',
+    joinedTimestamp: 1700000000000,
+    communicationDisabledUntilTimestamp: null,
+    guild: { id: '111' },
+    roles: { cache: collection([]) },
+    permissions: { has: (flag) => flags.includes(flag) },
+  };
+}
+
+function fakeClient({ members = [] } = {}) {
+  const memberCache = collection(members);
   const guild = {
     id: '111',
     name: 'Test Server',
@@ -30,7 +50,14 @@ function fakeClient() {
     premiumTier: 0,
     createdTimestamp: 1700000000000,
     iconURL: () => null,
-    members: { cache: collection([]) },
+    members: {
+      cache: memberCache,
+      fetch: async (id) => {
+        const m = memberCache.get(String(id));
+        if (!m) throw new Error('Unknown Member');
+        return m;
+      },
+    },
     channels: { cache: collection([]) },
     roles: { cache: collection([]) },
   };
@@ -42,11 +69,13 @@ function fakeClient() {
   };
 }
 
-/** Start the dashboard on an ephemeral port and return a fetch helper. */
-async function withServer(fn) {
+/** Start the dashboard on an ephemeral port and return a fetch helper.
+ * `clientOptions` (e.g. `{ members: [fakeMember(...)] }`) seeds the fake
+ * guild's member list, for tests exercising the per-guild access check. */
+async function withServer(fn, clientOptions) {
   const dir = mkdtempSync(path.join(tmpdir(), 'nodebot-web-'));
   db.initDb(path.join(dir, 'test.db'));
-  const server = createDashboard(fakeClient());
+  const server = createDashboard(fakeClient(clientOptions));
   await new Promise((resolve) => server.listen(0, resolve));
   const { port } = server.address();
   const call = (method, urlPath, { body, cookie } = {}) => fetch(
@@ -200,6 +229,25 @@ test('guild ids are serialized as strings, never numbers', () => withServer(asyn
   const body = await res.json();
   assert.equal(typeof body[0].id, 'string', 'snowflakes exceed JS safe integers');
 }));
+
+test('/api/guilds only lists servers the signed-in user actually has access '
+  + 'in — not every server the bot is installed in', () => withServer(async (call) => {
+  // '222' has a moderator-level session (a login elsewhere granted it that),
+  // but isn't a member of guild 111 in this test's fake guild at all, so it
+  // must not appear — otherwise the list alone leaks this server's name,
+  // icon, and member count to a moderator from a completely unrelated one.
+  const res = await call('GET', '/api/guilds', { cookie: cookieFor('moderator') });
+  assert.equal(res.status, 200);
+  assert.deepEqual(await res.json(), []);
+}));
+
+test('/api/guilds does list a server the user has real access in', () => withServer(async (call) => {
+  const res = await call('GET', '/api/guilds', { cookie: cookieFor('moderator') });
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.length, 1);
+  assert.equal(body[0].id, '111');
+}, { members: [fakeMember('222', [PermissionsBitField.Flags.ModerateMembers])] }));
 
 test('an unknown guild is a clean 404', () => withServer(async (call) => {
   const res = await call('GET', '/api/guilds/999999', { cookie: authCookie() });
@@ -461,7 +509,7 @@ test('a moderator cannot change settings', () => withServer(async (call) => {
 test('a moderator can still read settings and act on members', () => withServer(async (call) => {
   assert.equal((await call('GET', '/api/guilds/111/settings', { cookie: cookieFor('moderator') })).status, 200);
   assert.equal((await call('GET', '/api/guilds/111/members', { cookie: cookieFor('moderator') })).status, 200);
-}));
+}, { members: [fakeMember('222', [PermissionsBitField.Flags.ModerateMembers])] }));
 
 test('an admin can change settings', () => withServer(async (call) => {
   const res = await call('PUT', '/api/guilds/111/settings', {
@@ -469,6 +517,18 @@ test('an admin can change settings', () => withServer(async (call) => {
     body: { ai_model: 'something/else' },
   });
   assert.equal(res.status, 200);
+}, { members: [fakeMember('222', [PermissionsBitField.Flags.Administrator])] }));
+
+test('a session level is not enough on its own — it must also hold up in THAT guild', () => withServer(async (call) => {
+  // '222' claims admin in the cookie (the level a login elsewhere granted
+  // them), but is not a member of guild 111 at all in this test's fake
+  // guild, so the live per-guild check must still refuse them.
+  const res = await call('PUT', '/api/guilds/111/settings', {
+    cookie: cookieFor('admin'),
+    body: { ai_model: 'something/else' },
+  });
+  assert.equal(res.status, 403);
+  assert.match((await res.json()).detail, /don't have dashboard access in this server/);
 }));
 
 test('an admin cannot read the global bot log or change presence', () => withServer(async (call) => {
@@ -505,7 +565,10 @@ test('role mappings save like any other setting', () => withServer(async (call) 
   const s = await (await call('GET', '/api/guilds/111/settings', { cookie: cookieFor('admin') })).json();
   assert.deepEqual(s.dashboard_admin_roles, ['500']);
   assert.deepEqual(s.dashboard_mod_roles, ['600']);
-}));
+  // Administrator (unlike ManageGuild) keeps resolving to admin even after
+  // this test's own PUT above maps dashboard_admin_roles away from the
+  // "nothing mapped" permission fallback — see roles.js's resolveLevel.
+}, { members: [fakeMember('222', [PermissionsBitField.Flags.Administrator])] }));
 
 /* ── Legal pages ──────────────────────────────────────────────────────────
    These URLs go into Discord's application settings and cannot be changed
