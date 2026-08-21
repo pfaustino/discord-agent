@@ -2,10 +2,17 @@
 // Unlike images (media.js's /api/v1/images) there is no dedicated music
 // endpoint on OpenRouter — audio output rides the same /chat/completions
 // endpoint ordinary replies use, requesting modalities: ['text', 'audio'].
-// OpenRouter documents audio output as stream-only, so this reads the
-// response as SSE and concatenates the base64 audio deltas into one clip,
-// billed to the same OPENROUTER_API_KEY as everything else.
-import { OPENROUTER_API_KEY } from './config.js';
+//
+// The request/response shape here is verified against a working reference
+// implementation (a separate local Next.js app on this machine that already
+// generates real Lyria 3 clips through OpenRouter), not just OpenRouter's
+// own thin docs for this feature — in particular: audio-output requests are
+// rejected unless stream: true, and each streamed delta.audio.data chunk is
+// its own independently-decodable base64 fragment — decode every chunk on
+// its own and concatenate the resulting byte Buffers, NOT the base64
+// strings first. Getting that backwards produces corrupted audio the moment
+// two chunks land on a base64 padding boundary.
+import { OPENROUTER_API_KEY, PUBLIC_URL } from './config.js';
 
 export class MusicError extends Error {}
 
@@ -21,45 +28,13 @@ function headers() {
   return {
     Authorization: `Bearer ${OPENROUTER_API_KEY}`,
     'Content-Type': 'application/json',
+    // Sent alongside X-Title on the reference implementation's audio-output
+    // calls; harmless elsewhere, but audio-output is new enough on
+    // OpenRouter that it isn't worth dropping a header a working
+    // integration actually sends.
+    'HTTP-Referer': PUBLIC_URL || 'https://github.com/seed0001/discord-agent',
     'X-Title': 'Discord Agent',
   };
-}
-
-/** Parse an SSE body ("data: {...}\n\n" framing, terminated by "data: [DONE]")
- * into parsed JSON events. Reads via getReader() rather than async-iterating
- * the stream directly, since that's the one interface every ReadableStream
- * implementation is guaranteed to have. */
-async function* sseEvents(body) {
-  const reader = body.getReader();
-  const decoder = new TextDecoder();
-  let buf = '';
-  try {
-    for (;;) {
-      // eslint-disable-next-line no-await-in-loop
-      const { done, value } = await reader.read();
-      if (done) return;
-      buf += decoder.decode(value, { stream: true });
-      let idx = buf.indexOf('\n\n');
-      while (idx !== -1) {
-        const raw = buf.slice(0, idx);
-        buf = buf.slice(idx + 2);
-        for (const line of raw.split('\n')) {
-          if (!line.startsWith('data:')) continue;
-          const data = line.slice(5).trim();
-          if (data === '[DONE]') return;
-          if (!data) continue;
-          try {
-            yield JSON.parse(data);
-          } catch {
-            // partial/malformed line — ignore rather than aborting the clip
-          }
-        }
-        idx = buf.indexOf('\n\n');
-      }
-    }
-  } finally {
-    reader.releaseLock();
-  }
 }
 
 /**
@@ -74,7 +49,7 @@ async function* sseEvents(body) {
  *   Lyria 3 Clip; 'full' = a complete song on Lyria 3 Pro.
  * @param {typeof fetch} [opts.fetchFn] test-only override — real call sites
  *   never pass this.
- * @returns {Promise<{data: Buffer, mediaType: string, transcript: string, costUsd: number}>}
+ * @returns {Promise<{data: Buffer, mediaType: string, costUsd: number}>}
  */
 export async function generateMusic(prompt, { length = 'short', fetchFn = fetch } = {}) {
   const text = String(prompt || '').trim();
@@ -89,38 +64,68 @@ export async function generateMusic(prompt, { length = 'short', fetchFn = fetch 
       messages: [{ role: 'user', content: text }],
       modalities: ['text', 'audio'],
       audio: { format: 'mp3' },
+      // OpenRouter rejects audio-output requests outright without this
+      // ("Audio output requires stream: true") — confirmed against the
+      // reference implementation, not assumed from general docs.
       stream: true,
       usage: { include: true },
     }),
   });
 
-  if (!resp.ok) {
+  if (!resp.ok || !resp.body) {
+    const raw = await resp.text().catch(() => '');
     let detail = `HTTP ${resp.status}`;
     try {
-      const raw = await resp.text();
-      const data = JSON.parse(raw);
-      detail = data?.error?.message || raw.slice(0, 300) || detail;
+      detail = JSON.parse(raw)?.error?.message || raw.slice(0, 300) || detail;
     } catch {
-      // non-JSON error body — the HTTP status is all we get
+      if (raw) detail = raw.slice(0, 300);
     }
     throw new MusicError(`music generation failed (${resp.status}): ${detail}`);
   }
-  if (!resp.body) throw new MusicError('music generation returned no stream');
 
-  let audioB64 = '';
-  let transcript = '';
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder();
+  const chunks = [];
+  let audioFormat;
   let costUsd = 0;
-  for await (const event of sseEvents(resp.body)) {
-    if (event?.error) throw new MusicError(event.error.message || 'music generation failed mid-stream');
-    const delta = event?.choices?.[0]?.delta;
-    if (delta?.audio?.data) audioB64 += delta.audio.data;
-    if (delta?.audio?.transcript) transcript += delta.audio.transcript;
-    if (typeof event?.usage?.cost === 'number') costUsd = event.usage.cost;
+  let buffer = '';
+  try {
+    for (;;) {
+      // eslint-disable-next-line no-await-in-loop
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      let newlineIndex = buffer.indexOf('\n');
+      while (newlineIndex !== -1) {
+        const line = buffer.slice(0, newlineIndex).trim();
+        buffer = buffer.slice(newlineIndex + 1);
+        newlineIndex = buffer.indexOf('\n');
+
+        if (!line.startsWith('data:')) continue;
+        const data = line.slice(5).trim();
+        if (data === '[DONE]' || !data) continue;
+
+        let event;
+        try {
+          event = JSON.parse(data);
+        } catch {
+          continue; // partial/malformed line — ignore rather than aborting the clip
+        }
+        if (event.error) throw new MusicError(event.error.message || 'music generation failed mid-stream');
+
+        const audio = event.choices?.[0]?.delta?.audio;
+        if (audio?.data) chunks.push(Buffer.from(audio.data, 'base64'));
+        if (audio?.format) audioFormat = audio.format;
+        if (typeof event.usage?.cost === 'number') costUsd = event.usage.cost;
+      }
+    }
+  } finally {
+    reader.releaseLock();
   }
-  if (!audioB64) throw new MusicError(`${model} returned no audio`);
+
+  if (!chunks.length) throw new MusicError(`${model} returned no audio`);
 
   console.log(`[llm] ${model} [music] cost=${costUsd || '?'}`);
-  return {
-    data: Buffer.from(audioB64, 'base64'), mediaType: 'audio/mpeg', transcript: transcript.trim(), costUsd,
-  };
+  return { data: Buffer.concat(chunks), mediaType: `audio/${audioFormat === 'mp3' ? 'mpeg' : (audioFormat || 'mpeg')}`, costUsd };
 }

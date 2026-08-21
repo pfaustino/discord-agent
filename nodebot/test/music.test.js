@@ -23,8 +23,9 @@ function withFetch(fn, run) {
 }
 
 /** Fakes OpenRouter's streamed response: one "data: {...}\n\n" SSE chunk per
- * event, terminated by "data: [DONE]" — matches what music.js's sseEvents()
- * parser reads via getReader(). */
+ * event, terminated by "data: [DONE]" — matches what music.js's reader loop
+ * reads via getReader() (it splits on single newlines, so the blank line in
+ * each "\n\n" here is just an extra empty line it skips over). */
 function sseResponse(events) {
   const lines = [...events.map((e) => `data: ${JSON.stringify(e)}\n\n`), 'data: [DONE]\n\n'];
   const encoder = new TextEncoder();
@@ -50,45 +51,45 @@ function errorResponse(body, status = 400) {
   return { ok: false, status, text: async () => JSON.stringify(body) };
 }
 
-const audioChunk = (data, transcript) => ({ choices: [{ delta: { audio: { data, transcript } } }] });
+const audioChunk = (data, format) => ({ choices: [{ delta: { audio: { data, format } } }] });
 const b64 = (text) => Buffer.from(text).toString('base64');
 
 // ===========================================================================
 // music.js
 // ===========================================================================
 
-test('reassembles base64 audio deltas into one Buffer', () => withFetch(
-  // Real streaming audio splits ONE continuous base64 stream across deltas —
-  // padding only appears at the very end — so the fake here must too: two
-  // independently base64-encoded (and thus independently padded) fragments
-  // would not concatenate back into valid base64, which is exactly the
-  // mistake this fixture is deliberately avoiding.
-  async () => {
-    const whole = b64('SONGBYTES');
-    const mid = Math.ceil(whole.length / 2);
-    return sseResponse([
-      audioChunk(whole.slice(0, mid), 'la la'),
-      audioChunk(whole.slice(mid), ' la'),
-    ]);
-  },
+test('decodes each audio delta on its own and concatenates the bytes', () => withFetch(
+  // Verified against a working reference implementation: each delta.audio.data
+  // chunk is its OWN independently base64-encoded (and independently padded)
+  // fragment — decode every chunk separately, then concatenate the resulting
+  // byte Buffers. Concatenating the base64 STRINGS first and decoding once
+  // (the previous, unverified approach here) breaks the moment a chunk's
+  // padding lands mid-stream, which is exactly what this fixture catches:
+  // 'SONG' and 'BYTES' are each padded on their own, same as real chunks.
+  async () => sseResponse([audioChunk(b64('SONG'), 'mp3'), audioChunk(b64('BYTES'))]),
   async () => {
     const clip = await music.generateMusic('a cheerful jingle');
     assert.ok(Buffer.isBuffer(clip.data));
     assert.equal(clip.data.toString(), 'SONGBYTES');
     assert.equal(clip.mediaType, 'audio/mpeg');
-    assert.equal(clip.transcript, 'la la la');
   },
 ));
 
 test("length 'short' (default) uses the clip model, 'full' uses the pro model", () => {
   let sent = null;
+  let sentHeaders = null;
   return withFetch(
-    async (_url, opts) => { sent = JSON.parse(opts.body); return sseResponse([audioChunk(b64('x'))]); },
+    async (_url, opts) => {
+      sent = JSON.parse(opts.body);
+      sentHeaders = opts.headers;
+      return sseResponse([audioChunk(b64('x'))]);
+    },
     async () => {
       await music.generateMusic('a jingle');
       assert.equal(sent.model, 'google/lyria-3-clip-preview');
       assert.deepEqual(sent.modalities, ['text', 'audio']);
-      assert.equal(sent.stream, true);
+      assert.equal(sent.stream, true, 'OpenRouter rejects audio output without stream: true');
+      assert.ok(sentHeaders['HTTP-Referer'], 'the reference implementation sends this on every audio-output call');
 
       await music.generateMusic('a full song', { length: 'full' });
       assert.equal(sent.model, 'google/lyria-3-pro-preview');
@@ -125,7 +126,7 @@ test('an error event mid-stream aborts with its message', () => withFetch(
 ));
 
 test('a stream that never carries audio is a MusicError', () => withFetch(
-  async () => sseResponse([{ choices: [{ delta: { audio: { transcript: 'la' } } }] }]),
+  async () => sseResponse([{ choices: [{ delta: {} }] }]),
   async () => {
     await assert.rejects(music.generateMusic('a jingle'), /returned no audio/);
   },
