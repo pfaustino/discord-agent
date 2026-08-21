@@ -157,6 +157,30 @@ export const MEDIA_NOTE = (
   + 'and do not say it is on the way, because it has already landed.'
 );
 
+// Gated on canMusic, same shape as MEDIA_NOTE and for the same reason: this
+// is per-speaker (only admins/the server owner/the bot owner may generate),
+// not per-guild, so it belongs next to the tool grant rather than in the
+// dashboard-editable CAPABILITY_PROMPT.
+export const MUSIC_NOTE = (
+  'MAKING MUSIC. You have generate_music, and it is real — Lyria composes an '
+  + 'actual track and it is posted straight into the channel.\n'
+  + '- Do NOT call it the moment someone mentions wanting a song. Ask a couple '
+  + 'of quick questions first — genre/style, mood, key instruments, whether it '
+  + 'should have vocals and lyrics, and whether they want a short clip to try '
+  + 'an idea or a longer full song — unless they already told you enough '
+  + 'unprompted. Get an actual feel for what they want before you spend money '
+  + 'on a take.\n'
+  + '- Write the prompt yourself from what they told you — genre, mood, '
+  + 'instruments, tempo, structure, lyrics — rather than forwarding their '
+  + 'words verbatim.\n'
+  + '- By the time the tool returns, the file is ALREADY posted. Say '
+  + 'something short about what you made — do not repeat the prompt back, '
+  + 'and do not say it is on the way.\n'
+  + '- This is restricted to admins, the server owner, and the bot owner. If '
+  + 'someone without access asks, tell them plainly rather than pretending '
+  + "you made something."
+);
+
 // Gated on the channel-brains sidecar being configured (channelBrains.js
 // enabled()), deployment-wide rather than per guild or per speaker: search
 // is open to everyone wherever the sidecar exists, and a note the model

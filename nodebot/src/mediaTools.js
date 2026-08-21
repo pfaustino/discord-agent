@@ -64,8 +64,9 @@ const UPLOAD_LIMITS = {
 
 /** Largest attachment this guild can accept. Assumes the unboosted limit
  * when premiumTier is missing or unrecognised — voice.js's stand-in guild
- * may not carry it, and guessing high would mean a doomed upload. */
-function uploadLimit(guild) {
+ * may not carry it, and guessing high would mean a doomed upload. Exported
+ * for musicTools.js, which posts through the same Discord upload cap. */
+export function uploadLimit(guild) {
   return UPLOAD_LIMITS[guild?.premiumTier] ?? UPLOAD_LIMITS[GuildPremiumTier.None];
 }
 
@@ -83,8 +84,8 @@ function extension(mediaType, fallback) {
 
 /** What to tell the model when the result can't be uploaded. Worth being
  * explicit that nothing was posted — otherwise it cheerfully announces a
- * file the channel never received. */
-function tooLarge(bytes, limit, advice) {
+ * file the channel never received. Exported for musicTools.js. */
+export function tooLarge(bytes, limit, advice) {
   return `Error: the result is ${Math.round(bytes / MIB)} MiB but this server can only accept `
     + `${Math.round(limit / MIB)} MiB attachments, so nothing was posted. Tell the user it came out `
     + `too big and offer to ${advice}.`;
@@ -92,8 +93,9 @@ function tooLarge(bytes, limit, advice) {
 
 /** Told to the model after a successful post. Without the "already posted"
  * framing it tends to reply with the prompt again, or promise to send a
- * file that is already sitting above its own message. */
-function postedNote(count, noun) {
+ * file that is already sitting above its own message. Exported for
+ * musicTools.js. */
+export function postedNote(count, noun) {
   const subject = count === 1 ? `The ${noun} is` : `${count} ${noun}s are`;
   const object = count === 1 ? 'it' : 'them';
   return `${subject} ALREADY POSTED in the channel and the user can see ${object} now. `

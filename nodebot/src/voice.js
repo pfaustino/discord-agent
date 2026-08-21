@@ -33,6 +33,7 @@ import { KB_TOOL_SCHEMAS, runTool as runKbTool } from './knowledge.js';
 import * as channelBrains from './channelBrains.js';
 import * as agentTools from './agentTools.js';
 import * as mediaTools from './mediaTools.js';
+import * as musicTools from './musicTools.js';
 import * as github from './github.js';
 import * as memory from './memory.js';
 import { REPO_TOOL_SCHEMAS, runRepoTool } from './textChat.js';
@@ -575,8 +576,11 @@ async function respond(channel, speakerName, speakerId, state, { followUp = fals
       || { id: speakerId, tag: speakerName, username: speakerName },
   };
   const canGenerate = await mediaTools.allowed(fakeMessage);
+  // Music is gated separately and more narrowly (admin/server owner/bot
+  // owner only, never open to 'everyone') — see musicTools.allowed.
+  const canMakeMusic = await musicTools.allowed(fakeMessage);
   let systemPrompt = buildSystemPrompt({
-    client: channel.client, guild, owner, memory: memoryBlock, media: canGenerate,
+    client: channel.client, guild, owner, memory: memoryBlock, media: canGenerate, music: canMakeMusic,
   }) + VOICE_PROMPT({
     channel: channel.name, speaker: speakerName, followUp, mention,
   });
@@ -593,6 +597,7 @@ async function respond(channel, speakerName, speakerId, state, { followUp = fals
     ...baseTools,
     ...(owner ? agentTools.TOOL_SCHEMAS : []),
     ...(canGenerate ? mediaTools.TOOL_SCHEMAS : []),
+    ...(canMakeMusic ? musicTools.TOOL_SCHEMAS : []),
     ...(channelBrains.enabled() ? channelBrains.TOOL_SCHEMAS : []),
     ...(channelBrains.enabled() && owner ? channelBrains.OWNER_TOOL_SCHEMAS : []),
   ];
@@ -605,11 +610,13 @@ async function respond(channel, speakerName, speakerId, state, { followUp = fals
     // No owner check: mediaTools.execute re-checks access itself, so gating
     // here would only duplicate it — and get it wrong for open guilds.
     if (name in mediaTools.TOOLS) return mediaTools.execute(null, fakeMessage, name, args);
+    // Same shape: execute re-checks the admin/owner gate on music itself.
+    if (name in musicTools.TOOLS) return musicTools.execute(null, fakeMessage, name, args);
     // Same shape: execute re-checks the owner gate on index/delete itself.
     if (channelBrains.isChannelBrainsTool(name)) return channelBrains.execute(name, args, owner);
     return runTool(name, args);
   };
-  const onToolCalls = (owner || canGenerate) ? async (toolCalls) => {
+  const onToolCalls = (owner || canGenerate || canMakeMusic) ? async (toolCalls) => {
     const blurb = describeToolCalls(toolCalls);
     recordTurn(guild.id, { source: 'voice', channel: channel.name, speaker: self, text: blurb });
     try {

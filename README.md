@@ -39,6 +39,13 @@ tools, wake pipeline, prompts, models, limitations, roadmap)
   separate app or machine. Gated per-guild (owner-only or everyone) with an
   hourly cap on video specifically, since it costs and takes noticeably
   more than an image.
+- Music generation: composes an actual track with Google's Lyria 3 (via
+  OpenRouter) and posts it straight into the channel — a quick ~30-second
+  clip or a longer structured song. Before generating, the bot asks a few
+  clarifying questions (genre, mood, instruments, vocals/lyrics, clip vs
+  full song) rather than generating off the first mention of "song." Unlike
+  images/video this is **not** configurable to 'everyone': only server
+  admins, the server owner, or the bot owner can ask for one.
 - Document review: drop a file on a message that mentions the bot (or in
   an always-on AI channel) — text, markdown, code, PDFs, and Word docs are
   read automatically and folded into the conversation so the bot can

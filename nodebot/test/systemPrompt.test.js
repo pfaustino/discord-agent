@@ -7,7 +7,9 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import * as db from '../src/db.js';
 import { buildSystemPrompt, commandList } from '../src/systemPrompt.js';
-import { SYSTEM_PROMPT, CAPABILITY_PROMPT, OWNER_NOTE, MEMBER_NOTE } from '../src/persona.js';
+import {
+  SYSTEM_PROMPT, CAPABILITY_PROMPT, OWNER_NOTE, MEMBER_NOTE, MUSIC_NOTE,
+} from '../src/persona.js';
 import { loadCommands } from '../src/load-commands.js';
 import { TOOL_SCHEMAS } from '../src/tools.js';
 import { KB_TOOL_SCHEMAS } from '../src/knowledge.js';
@@ -60,6 +62,17 @@ test('the owner and member notes are mutually exclusive', withDb(async () => {
   const asMember = buildSystemPrompt({ client, guild, owner: false });
   assert.ok(asOwner.includes(OWNER_NOTE) && !asOwner.includes(MEMBER_NOTE));
   assert.ok(asMember.includes(MEMBER_NOTE) && !asMember.includes(OWNER_NOTE));
+}));
+
+test('the music note is appended only when this speaker may generate music', withDb(async () => {
+  const client = await realClient();
+  const withMusic = buildSystemPrompt({ client, guild, music: true });
+  const withoutMusic = buildSystemPrompt({ client, guild, music: false });
+  assert.ok(withMusic.includes(MUSIC_NOTE));
+  assert.ok(!withoutMusic.includes(MUSIC_NOTE));
+  // Not a per-guild CAPABILITY_PROMPT claim — it's gated per speaker, same
+  // reasoning as MEDIA_NOTE, so it must never bleed into the shared text.
+  assert.ok(!CAPABILITY_PROMPT.includes('generate_music'));
 }));
 
 test('memory is appended when there is any, and omitted when not', withDb(async () => {
