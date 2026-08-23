@@ -1,7 +1,4 @@
-__pycache__/
-*.pyc
 .env
 data/
-.venv/
-venv/
 node_modules/
+*.db

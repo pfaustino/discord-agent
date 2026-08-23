@@ -4,26 +4,19 @@ cd /d "%~dp0"
 
 set "PROJECT_DIR=%CD%"
 
-if not defined PORT set PORT=8001
+if not defined PORT set PORT=8000
 
 echo.
-echo  Discord Agent - restart
+echo  Discord Agent (nodebot) - restart
 echo.
-
-if not exist ".venv\Scripts\python.exe" (
-  echo ERROR: .venv not found.
-  echo Run: python -m venv .venv
-  echo      .venv\Scripts\pip install -r requirements.txt
-  exit /b 1
-)
 
 where node >nul 2>&1
 if errorlevel 1 (
-  echo ERROR: node not found. Install Node.js and add it to PATH.
+  echo ERROR: node not found. Install Node.js 22+ and add it to PATH.
   exit /b 1
 )
 
-REM Read PORT from .env (default 8001; avoid 8000 if another app uses it)
+REM Read PORT from .env (default 8000)
 if exist .env (
   for /f "usebackq eol=# tokens=1,* delims==" %%a in (".env") do (
     if /i "%%a"=="PORT" set "PORT=%%b"
@@ -32,62 +25,52 @@ if exist .env (
 
 echo Stopping discord-agent processes...
 call :KillProject
-call :KillPort 8091
 call :KillPort %PORT%
-if not "%PORT%"=="8001" call :KillPort 8001
-timeout /t 2 /nobreak >nul
+timeout /t 2 /nobreak >nul 2>nul
 call :KillProject
-call :KillPort 8091
 call :KillPort %PORT%
-if not "%PORT%"=="8001" call :KillPort 8001
 
-call :PortInUse 8091
-if not errorlevel 1 (
-  echo ERROR: Port 8091 is still in use.
-  exit /b 1
-)
 call :PortInUse %PORT%
 if not errorlevel 1 (
   echo ERROR: Port %PORT% is still in use.
   exit /b 1
 )
 
-echo Ports are free.
-echo Loading config from database...
+echo Port %PORT% is free.
 
-set "ENV_FILE=%TEMP%\discord-agent-env.txt"
-.\.venv\Scripts\python.exe export_env.py > "!ENV_FILE!" 2>&1
-if errorlevel 1 (
-  echo ERROR: Could not load config:
-  type "!ENV_FILE!"
-  exit /b 1
+if not exist nodebot\node_modules (
+  echo Installing nodebot dependencies...
+  cd nodebot
+  call npm ci --omit=dev
+  if errorlevel 1 exit /b 1
+  cd ..
 )
 
-for /f "usebackq tokens=1,* delims==" %%a in ("!ENV_FILE!") do (
-  set "%%a=%%b"
+if exist data\bot.db (
+  if not exist data\nodebot.db (
+    echo Migrating guild settings from data\bot.db ...
+    node --experimental-sqlite nodebot\src\migrate-settings.js --from data\bot.db --to data\nodebot.db
+  )
 )
-
-if not defined PORT set PORT=8001
 
 echo Dashboard: http://localhost:%PORT%
 echo.
 
-if not defined DISCORD_TOKEN (
-  echo WARNING: DISCORD_TOKEN not set - open http://localhost:%PORT% to finish setup.
+if not exist .env (
+  echo WARNING: .env not found — copy .env.example and fill in DISCORD_TOKEN, etc.
 )
 
-echo Starting voice listener ^(port 8091^)...
-start "Discord Agent Listener" /B node listener\index.js
+echo Registering slash commands (non-fatal if this fails)...
+node --experimental-sqlite nodebot\src\deploy-commands.js || echo Slash-command registration skipped.
 
-echo Starting bot + dashboard ^(port %PORT%^)...
-echo Press Ctrl+C to stop both.
+echo Starting bot + dashboard...
+echo Press Ctrl+C to stop.
 echo.
-.\.venv\Scripts\python.exe main.py
+node --experimental-sqlite nodebot\src\index.js
 
 echo.
-echo Stopping voice listener...
+echo Stopping...
 call :KillProject
-call :KillPort 8091
 
 endlocal
 exit /b 0
@@ -97,7 +80,7 @@ REM --- helpers ---
 :KillProject
 powershell -NoProfile -Command ^
   "$root = '%PROJECT_DIR%'.ToLower();" ^
-  "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and $_.CommandLine.ToLower().Contains($root) -and ($_.CommandLine -match 'main\.py' -or $_.CommandLine -match 'listener\\index\.js' -or $_.CommandLine -match 'listener/index\.js') } | ForEach-Object { Write-Host ('  Killing PID ' + $_.ProcessId + ' ' + $_.Name); Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"
+  "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and $_.CommandLine.ToLower().Contains($root) -and ($_.CommandLine -match 'nodebot' -or $_.CommandLine -match 'listener\\index\.js' -or $_.CommandLine -match 'listener/index\.js' -or $_.CommandLine -match 'main\.py') } | ForEach-Object { Write-Host ('  Killing PID ' + $_.ProcessId + ' ' + $_.Name); Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"
 goto :eof
 
 :KillPort

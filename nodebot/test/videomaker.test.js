@@ -1,0 +1,256 @@
+// videomaker.js — the native video pipeline. Script generation goes through
+// the global fetch (faked here, same seam media.test.js uses), but images,
+// narration, and ffmpeg are exercised through their injectable overrides
+// (deps.generateImageFn / synthesizeFn / runFfmpegFn) instead: media.js's
+// generateImage is already covered in media.test.js, tts.synthesize hits a
+// real external library (msedge-tts) that isn't fetch-based and bills real
+// guilds via credits.meter, and there's no ffmpeg binary to assume present
+// in every environment this runs in. Real call sites never pass any of
+// these overrides — same "test seam, production never touches it" shape as
+// isOwner's ownerId or media.js's `now`.
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { writeFile } from 'node:fs/promises';
+import { createVideo, extractJson, extensionFor, VideoMakerError } from '../src/videomaker.js';
+
+function jsonResponse(body, status = 200) {
+  return { ok: status < 400, status, text: async () => JSON.stringify(body) };
+}
+
+const SCENES = (n) => Array.from({ length: n }, (_, i) => ({
+  narration: `narration ${i + 1}`, image_prompt: `a picture for scene ${i + 1}`,
+}));
+
+function scriptResponse({ scenes = SCENES(2), cost = 0.01, title = 'A Test Video' } = {}) {
+  return jsonResponse({
+    choices: [{ message: { content: JSON.stringify({
+      title, description: 'a description', tags: ['a', 'b'], scenes,
+    }) } }],
+    usage: { cost },
+  });
+}
+
+function fakeFetch(body = scriptResponse()) {
+  const calls = [];
+  const fn = async (url, opts) => {
+    calls.push({ url, body: opts?.body ? JSON.parse(opts.body) : null });
+    return body;
+  };
+  return { fn, calls };
+}
+
+function fakeImages({ cost = 0.02 } = {}) {
+  const calls = [];
+  const fn = async (prompt, opts) => {
+    calls.push({ prompt, opts });
+    return { images: [{ data: Buffer.from(`img:${prompt}`), mediaType: 'image/jpeg' }], costUsd: cost };
+  };
+  return { fn, calls };
+}
+
+function fakeNarration() {
+  const calls = [];
+  const fn = async (text, opts) => {
+    calls.push({ text, opts });
+    return Buffer.from(`aud:${text}`);
+  };
+  return { fn, calls };
+}
+
+/** Records the ffmpeg args and, since the pipeline reads the real output
+ * file back off disk afterward, actually writes something to the output
+ * path (always the last arg) so that read succeeds without a real binary. */
+function fakeFfmpeg() {
+  const calls = [];
+  const fn = async (args) => {
+    calls.push(args);
+    await writeFile(args[args.length - 1], Buffer.from('FAKE_MP4'));
+  };
+  return { fn, calls };
+}
+
+function baseDeps(overrides = {}) {
+  const fetch_ = overrides.fetch ?? fakeFetch();
+  const images = overrides.images ?? fakeImages();
+  const narration = overrides.narration ?? fakeNarration();
+  const ffmpeg = overrides.ffmpeg ?? fakeFfmpeg();
+  return {
+    deps: {
+      fetchFn: fetch_.fn, generateImageFn: images.fn, synthesizeFn: narration.fn, runFfmpegFn: ffmpeg.fn,
+    },
+    calls: {
+      fetch: fetch_.calls, images: images.calls, narration: narration.calls, ffmpeg: ffmpeg.calls,
+    },
+  };
+}
+
+// ===========================================================================
+// extractJson
+// ===========================================================================
+
+test('extractJson parses a bare JSON object', () => {
+  assert.deepEqual(extractJson('{"a": 1}'), { a: 1 });
+});
+
+test('extractJson strips a markdown fence', () => {
+  assert.deepEqual(extractJson('```json\n{"a": 1}\n```'), { a: 1 });
+});
+
+test('extractJson takes the outermost braces when there is prose around it', () => {
+  assert.deepEqual(extractJson('Sure, here you go:\n{"a": 1}\nHope that helps!'), { a: 1 });
+});
+
+test('extractJson throws a VideoMakerError when there is no JSON object at all', () => {
+  assert.throws(() => extractJson('no json here'), VideoMakerError);
+});
+
+test('extractJson throws a VideoMakerError on malformed JSON', () => {
+  assert.throws(() => extractJson('{"a": }'), VideoMakerError);
+});
+
+// ===========================================================================
+// extensionFor
+// ===========================================================================
+
+test('extensionFor maps common types, including the jpeg special case', () => {
+  assert.equal(extensionFor('image/jpeg'), 'jpg');
+  assert.equal(extensionFor('image/png'), 'png');
+  assert.equal(extensionFor('image/webp'), 'webp');
+  assert.equal(extensionFor(undefined), 'png');
+  assert.equal(extensionFor('image/png; charset=binary'), 'png');
+});
+
+// ===========================================================================
+// createVideo
+// ===========================================================================
+
+test('a blank topic is rejected before any request goes out', async () => {
+  const { deps, calls } = baseDeps();
+  await assert.rejects(createVideo('   ', { deps }), VideoMakerError);
+  await assert.rejects(createVideo('', { deps }), /topic is required/);
+  assert.equal(calls.fetch.length, 0, 'a blank topic must not cost a request');
+});
+
+test('the full pipeline runs script -> images -> narration -> assemble and returns a real mp4 buffer', async () => {
+  const { deps, calls } = baseDeps();
+  const clip = await createVideo('the history of cats', { deps });
+
+  assert.ok(Buffer.isBuffer(clip.data));
+  assert.equal(clip.data.toString(), 'FAKE_MP4');
+  assert.equal(clip.contentType, 'video/mp4');
+  assert.equal(clip.title, 'A Test Video');
+  assert.equal(clip.sceneCount, 2);
+
+  assert.equal(calls.fetch.length, 1, 'one script request');
+  assert.equal(calls.fetch[0].body.messages[1].content, 'Topic: the history of cats');
+  assert.equal(calls.images.length, 2, 'one image request per scene');
+  assert.equal(calls.narration.length, 2, 'one narration request per scene');
+  // one ffmpeg call per scene segment, plus one for the final concat
+  assert.equal(calls.ffmpeg.length, 3);
+});
+
+test('notes are appended to the script request when given, omitted when not', async () => {
+  const { deps, calls } = baseDeps();
+  await createVideo('cats', { deps, notes: 'keep it lighthearted' });
+  assert.match(calls.fetch[0].body.messages[1].content, /Extra guidance: keep it lighthearted/);
+
+  const second = baseDeps();
+  await createVideo('cats', { deps: second.deps });
+  assert.doesNotMatch(second.calls.fetch[0].body.messages[1].content, /Extra guidance/);
+});
+
+test('imageModel and scriptModel overrides are forwarded to the respective calls', async () => {
+  const { deps, calls } = baseDeps();
+  await createVideo('cats', { deps, imageModel: 'some/image-model', scriptModel: 'some/script-model' });
+  assert.equal(calls.fetch[0].body.model, 'some/script-model');
+  assert.ok(calls.images.every((c) => c.opts.model === 'some/image-model'));
+});
+
+test('total cost sums the script cost and every scene image cost', async () => {
+  const { deps } = baseDeps({
+    fetch: fakeFetch(scriptResponse({ scenes: SCENES(3), cost: 0.05 })),
+    images: fakeImages({ cost: 0.02 }),
+  });
+  const clip = await createVideo('cats', { deps });
+  // 0.05 script + 3 scenes * 0.02 each, floating point tolerance
+  assert.ok(Math.abs(clip.costUsd - 0.11) < 1e-9, `expected ~0.11, got ${clip.costUsd}`);
+});
+
+test('scene order survives out-of-order concurrent completion', async () => {
+  const scenes = SCENES(4);
+  const images = { calls: [] };
+  images.fn = async (prompt, opts) => {
+    images.calls.push({ prompt, opts });
+    // later scenes resolve first
+    const n = Number(prompt.match(/scene (\d+)/)[1]);
+    await new Promise((r) => setTimeout(r, (5 - n) * 5));
+    return { images: [{ data: Buffer.from(`img-${n}`), mediaType: 'image/png' }], costUsd: 0 };
+  };
+  const ffmpeg = fakeFfmpeg();
+  const { deps } = baseDeps({
+    fetch: fakeFetch(scriptResponse({ scenes })), images, ffmpeg,
+  });
+  await createVideo('cats', { deps });
+  // segment N's input image path should reference scene_N — i.e. the Nth
+  // ffmpeg segment call used the Nth scene's image, not whichever finished first
+  const segmentCalls = ffmpeg.calls.slice(0, 4);
+  segmentCalls.forEach((args, i) => {
+    const imgPath = args[args.indexOf('-i') + 1];
+    assert.match(imgPath, new RegExp(`scene_${i + 1}\\.`));
+  });
+});
+
+test('a non-OK script response surfaces the upstream error message', async () => {
+  const { deps } = baseDeps({
+    fetch: fakeFetch(jsonResponse({ error: { message: 'model not found' } }, 404)),
+  });
+  await assert.rejects(
+    createVideo('cats', { deps }),
+    (err) => err instanceof VideoMakerError && /404/.test(err.message) && /model not found/.test(err.message),
+  );
+});
+
+test('a script with zero scenes is rejected', async () => {
+  const { deps } = baseDeps({ fetch: fakeFetch(scriptResponse({ scenes: [] })) });
+  await assert.rejects(createVideo('cats', { deps }), /zero scenes/);
+});
+
+test('a scene missing narration or an image prompt is rejected', async () => {
+  const { deps } = baseDeps({
+    fetch: fakeFetch(scriptResponse({ scenes: [{ narration: 'only narration' }] })),
+  });
+  await assert.rejects(createVideo('cats', { deps }), /scene 1/);
+});
+
+test('a scene whose narration has no TTS backend fails the whole job', async () => {
+  const narration = { calls: [], fn: async () => null };
+  const { deps } = baseDeps({ narration });
+  await assert.rejects(createVideo('cats', { deps }), /no TTS backend produced audio/);
+});
+
+test('an image generation failure propagates rather than being swallowed', async () => {
+  const images = { calls: [], fn: async () => { throw new Error('OpenRouter is down'); } };
+  const { deps } = baseDeps({ images });
+  await assert.rejects(createVideo('cats', { deps }), /OpenRouter is down/);
+});
+
+test('an ffmpeg failure propagates as a VideoMakerError', async () => {
+  const ffmpeg = { calls: [], fn: async () => { throw new VideoMakerError('ffmpeg failed: boom'); } };
+  const { deps } = baseDeps({ ffmpeg });
+  await assert.rejects(createVideo('cats', { deps }), /ffmpeg failed/);
+});
+
+test('onStatus reports each stage in order, ending near 100% before the final read', async () => {
+  const { deps } = baseDeps({ fetch: fakeFetch(scriptResponse({ scenes: SCENES(2) })) });
+  const stages = [];
+  await createVideo('cats', { deps, onStatus: async (info) => stages.push({ ...info }) });
+  const seen = [...new Set(stages.map((s) => s.stage))];
+  assert.deepEqual(seen, ['script', 'images', 'narration', 'assemble']);
+  assert.ok(stages.every((s) => s.progress >= 0 && s.progress <= 1));
+  // progress is monotonically non-decreasing across the whole run
+  for (let i = 1; i < stages.length; i += 1) {
+    assert.ok(stages[i].progress >= stages[i - 1].progress, `progress went backwards at index ${i}`);
+  }
+  assert.equal(stages.at(-1).stage, 'assemble');
+  assert.ok(stages.at(-1).stageProgress >= 0.99);
+});
