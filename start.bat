@@ -38,6 +38,16 @@ if not errorlevel 1 (
 
 echo Port %PORT% is free.
 
+set "ENV_FILE=%TEMP%\discord-agent-env.txt"
+if exist data\bot.db (
+  node export_env.js data\bot.db > "!ENV_FILE!" 2>nul
+  if exist "!ENV_FILE!" (
+    for /f "usebackq tokens=1,* delims==" %%a in ("!ENV_FILE!") do (
+      if not defined %%a set "%%a=%%b"
+    )
+  )
+)
+
 if not exist nodebot\node_modules (
   echo Installing nodebot dependencies...
   cd nodebot

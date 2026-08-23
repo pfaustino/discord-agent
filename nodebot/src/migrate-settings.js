@@ -30,7 +30,9 @@ export function migrateSettings(fromPath, toPath, { dryRun = false } = {}) {
   const source = new DatabaseSync(fromPath, { readOnly: true });
   let rows;
   try {
-    rows = source.prepare('SELECT guild_id, key, value FROM guild_settings').all();
+    // Python db stores guild_id as INTEGER; read as TEXT so snowflakes past 2^53
+    // are not corrupted by SQLite's JS number binding.
+    rows = source.prepare('SELECT CAST(guild_id AS TEXT) AS guild_id, key, value FROM guild_settings').all();
   } catch (err) {
     source.close();
     throw new Error(`could not read guild_settings from ${fromPath}: ${err.message}`);
