@@ -98,6 +98,74 @@ test('knowledge base save/get/list/search/delete', withDb(() => {
   assert.equal(db.kbDelete('1', 'deploy'), false);
 }));
 
+// -- song library ---------------------------------------------------------------
+
+function addTestSong(guildId, title, bytes = 'AUDIO') {
+  return db.addSong(guildId, {
+    title, prompt: `a song called ${title}`, data: Buffer.from(bytes),
+    mediaType: 'audio/mpeg', length: 'short', costUsd: 0.04, createdBy: '42',
+  });
+}
+
+test('addSong/listSongs/getSongData round-trip, including the audio bytes', withDb(() => {
+  const id = addTestSong('1', 'Chill Vibes');
+  assert.equal(db.countSongs('1'), 1);
+  const rows = db.listSongs('1');
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].title, 'Chill Vibes');
+  assert.equal(rows[0].id, id);
+
+  const data = db.getSongData('1', id);
+  assert.equal(data.title, 'Chill Vibes');
+  assert.ok(Buffer.isBuffer(data.data));
+  assert.equal(data.data.toString(), 'AUDIO');
+  assert.equal(data.mediaType, 'audio/mpeg');
+}));
+
+test('songs are isolated per guild', withDb(() => {
+  addTestSong('1', 'Guild One Song');
+  assert.equal(db.countSongs('2'), 0);
+  assert.deepEqual(db.listSongs('2'), []);
+}));
+
+test('listSongs orders oldest first', withDb(() => {
+  addTestSong('1', 'First');
+  addTestSong('1', 'Second');
+  const titles = db.listSongs('1').map((r) => r.title);
+  assert.deepEqual(titles, ['First', 'Second']);
+}));
+
+test('findSong resolves by id, exact title, and unambiguous partial title', withDb(() => {
+  const id = addTestSong('1', 'Chill Vibes');
+  addTestSong('1', 'Upbeat Anthem');
+  assert.equal(db.findSong('1', String(id)).title, 'Chill Vibes');
+  assert.equal(db.findSong('1', 'chill vibes').title, 'Chill Vibes'); // case-insensitive exact
+  assert.equal(db.findSong('1', 'anthem').title, 'Upbeat Anthem'); // unambiguous partial
+}));
+
+test('findSong refuses to guess between two ambiguous partial matches', withDb(() => {
+  addTestSong('1', 'Morning Chill');
+  addTestSong('1', 'Evening Chill');
+  assert.equal(db.findSong('1', 'chill'), null);
+}));
+
+test('findSong returns null for no match or a blank query', withDb(() => {
+  addTestSong('1', 'Chill Vibes');
+  assert.equal(db.findSong('1', 'nonexistent'), null);
+  assert.equal(db.findSong('1', ''), null);
+}));
+
+test('deleteSong removes a row and reports whether one was actually removed', withDb(() => {
+  const id = addTestSong('1', 'Chill Vibes');
+  assert.equal(db.deleteSong('1', id), true);
+  assert.equal(db.countSongs('1'), 0);
+  assert.equal(db.deleteSong('1', id), false);
+}));
+
+test('SONG_LIBRARY_CAP is 10', () => {
+  assert.equal(db.SONG_LIBRARY_CAP, 10);
+});
+
 test('turns: pending until marked consolidated, never deleted after', withDb(() => {
   db.addTurn('1', 1, 'travis', '42', 'hello', 'text', 'general', 100);
   assert.deepEqual(db.getPendingTurnGuilds(), ['1']);

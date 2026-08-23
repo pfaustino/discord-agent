@@ -152,6 +152,10 @@ function withDb(fn) {
   return async () => {
     const dir = mkdtempSync(path.join(tmpdir(), 'nodebot-music-test-'));
     db.initDb(path.join(dir, 'test.db'));
+    // The "song I just made" cache is module-level, keyed by guild id, and
+    // every fakeMessage below shares guild id '1' — without this reset a
+    // generate_music left pending by an earlier test leaks into the next.
+    musicTools._resetForTests();
     try {
       await fn();
     } finally {
@@ -297,4 +301,228 @@ test('a blank prompt is a ToolError, surfaced as an Error string', withDb(async 
   const result = await musicTools.execute(null, fakeMessage(OWNER), 'generate_music', {}, OWNER);
   assert.match(result, /^Error: /);
   assert.match(result, /needs a prompt/);
+}));
+
+// ===========================================================================
+// song library + voice playback
+// ===========================================================================
+
+/** A fake stand-in for voice.js's playback API, so these tests exercise
+ * musicTools' own logic (what gets saved/found/queued) without driving a
+ * real @discordjs/voice connection — the same reason voice.test.js itself
+ * doesn't touch the AudioPlayer machinery directly. */
+function fakeVoice({ connected = true, busy = false } = {}) {
+  const played = [];
+  let playing = false;
+  return {
+    played, // array of arrays of {title, data, mediaType} passed to playInVoice
+    async playInVoice(guild, songs) {
+      if (!connected || busy) return false;
+      played.push(songs);
+      playing = true;
+      return true;
+    },
+    stopMusic() {
+      const wasPlaying = playing;
+      playing = false;
+      return wasPlaying;
+    },
+  };
+}
+
+async function generateAndDiscard(message) {
+  return withFetch(
+    async () => sseResponse(musicChunk('CLIPBYTES')),
+    () => musicTools.execute(null, message, 'generate_music', { prompt: 'a jingle' }, OWNER),
+  );
+}
+
+test('save_song refuses when nothing was generated recently', withDb(async () => {
+  const result = await musicTools.execute(null, fakeMessage(OWNER), 'save_song', { title: 'X' }, OWNER);
+  assert.match(result, /^Error:/);
+  assert.match(result, /no recently generated song/);
+}));
+
+test('save_song needs a title', withDb(async () => {
+  const message = fakeMessage(OWNER);
+  await generateAndDiscard(message);
+  const result = await musicTools.execute(null, message, 'save_song', {}, OWNER);
+  assert.match(result, /^Error:/);
+  assert.match(result, /needs a title/);
+}));
+
+test('generate_music then save_song persists it, and list_songs shows it', withDb(async () => {
+  const message = fakeMessage(OWNER);
+  await generateAndDiscard(message);
+  const saved = await musicTools.execute(null, message, 'save_song', { title: 'Chill Vibes' }, OWNER);
+  assert.match(saved, /Saved "Chill Vibes"/);
+  assert.equal(db.countSongs('1'), 1);
+
+  const listed = await musicTools.execute(null, message, 'list_songs', {}, OWNER);
+  assert.match(listed, /Chill Vibes/);
+}));
+
+test('save_song a second time without a fresh generation fails — no silent duplicate', withDb(async () => {
+  const message = fakeMessage(OWNER);
+  await generateAndDiscard(message);
+  await musicTools.execute(null, message, 'save_song', { title: 'First Save' }, OWNER);
+  const result = await musicTools.execute(null, message, 'save_song', { title: 'Second Save' }, OWNER);
+  assert.match(result, /^Error:/);
+  assert.equal(db.countSongs('1'), 1);
+}));
+
+test('save_song refuses once the library is full and names the current titles', withDb(async () => {
+  const message = fakeMessage(OWNER);
+  for (let i = 0; i < db.SONG_LIBRARY_CAP; i += 1) {
+    db.addSong('1', {
+      title: `Song ${i}`, prompt: 'p', data: Buffer.from('x'), mediaType: 'audio/mpeg',
+      length: 'short', costUsd: 0, createdBy: OWNER,
+    });
+  }
+  await generateAndDiscard(message);
+  const result = await musicTools.execute(null, message, 'save_song', { title: 'One Too Many' }, OWNER);
+  assert.match(result, /^Error:/);
+  assert.match(result, /full \(10\/10\)/);
+  assert.match(result, /Song 0/);
+  assert.equal(db.countSongs('1'), db.SONG_LIBRARY_CAP);
+}));
+
+test('list_songs reports an empty library plainly', withDb(async () => {
+  const result = await musicTools.execute(null, fakeMessage(OWNER), 'list_songs', {}, OWNER);
+  assert.match(result, /empty/);
+}));
+
+test('delete_song removes a saved song by title', withDb(async () => {
+  db.addSong('1', {
+    title: 'Chill Vibes', prompt: 'p', data: Buffer.from('x'), mediaType: 'audio/mpeg',
+    length: 'short', costUsd: 0, createdBy: OWNER,
+  });
+  const result = await musicTools.execute(null, fakeMessage(OWNER), 'delete_song', { song: 'chill vibes' }, OWNER);
+  assert.match(result, /Deleted "Chill Vibes"/);
+  assert.equal(db.countSongs('1'), 0);
+}));
+
+test('delete_song reports an unmatched title without deleting anything', withDb(async () => {
+  db.addSong('1', {
+    title: 'Chill Vibes', prompt: 'p', data: Buffer.from('x'), mediaType: 'audio/mpeg',
+    length: 'short', costUsd: 0, createdBy: OWNER,
+  });
+  const result = await musicTools.execute(null, fakeMessage(OWNER), 'delete_song', { song: 'nope' }, OWNER);
+  assert.match(result, /^Error:/);
+  assert.equal(db.countSongs('1'), 1);
+}));
+
+test('play_song with no name plays the just-generated clip, not a saved one', withDb(async () => {
+  const voice = fakeVoice();
+  musicTools._setVoiceModuleForTests(voice);
+  try {
+    const message = fakeMessage(OWNER);
+    await generateAndDiscard(message);
+    const result = await musicTools.execute(null, message, 'play_song', {}, OWNER);
+    assert.match(result, /Now playing/);
+    assert.equal(voice.played.length, 1);
+    assert.equal(voice.played[0][0].data.toString(), 'CLIPBYTES');
+  } finally {
+    musicTools._setVoiceModuleForTests(null);
+  }
+}));
+
+test('play_song with no name and nothing generated is a clear error', withDb(async () => {
+  musicTools._setVoiceModuleForTests(fakeVoice());
+  try {
+    const result = await musicTools.execute(null, fakeMessage(OWNER), 'play_song', {}, OWNER);
+    assert.match(result, /^Error:/);
+    assert.match(result, /nothing was generated recently/);
+  } finally {
+    musicTools._setVoiceModuleForTests(null);
+  }
+}));
+
+test('play_song by title plays the saved song', withDb(async () => {
+  db.addSong('1', {
+    title: 'Chill Vibes', prompt: 'p', data: Buffer.from('SAVEDBYTES'), mediaType: 'audio/mpeg',
+    length: 'short', costUsd: 0, createdBy: OWNER,
+  });
+  const voice = fakeVoice();
+  musicTools._setVoiceModuleForTests(voice);
+  try {
+    const result = await musicTools.execute(null, fakeMessage(OWNER), 'play_song', { song: 'Chill Vibes' }, OWNER);
+    assert.match(result, /Now playing "Chill Vibes"/);
+    assert.equal(voice.played[0][0].data.toString(), 'SAVEDBYTES');
+  } finally {
+    musicTools._setVoiceModuleForTests(null);
+  }
+}));
+
+test('play_song reports plainly when the bot is not connected to voice', withDb(async () => {
+  db.addSong('1', {
+    title: 'Chill Vibes', prompt: 'p', data: Buffer.from('x'), mediaType: 'audio/mpeg',
+    length: 'short', costUsd: 0, createdBy: OWNER,
+  });
+  musicTools._setVoiceModuleForTests(fakeVoice({ connected: false }));
+  try {
+    const result = await musicTools.execute(null, fakeMessage(OWNER), 'play_song', { song: 'Chill Vibes' }, OWNER);
+    assert.match(result, /^Error:/);
+    assert.match(result, /not in a voice channel/);
+  } finally {
+    musicTools._setVoiceModuleForTests(null);
+  }
+}));
+
+test('play_playlist queues every saved song in order', withDb(async () => {
+  db.addSong('1', {
+    title: 'First', prompt: 'p', data: Buffer.from('a'), mediaType: 'audio/mpeg',
+    length: 'short', costUsd: 0, createdBy: OWNER,
+  });
+  db.addSong('1', {
+    title: 'Second', prompt: 'p', data: Buffer.from('b'), mediaType: 'audio/mpeg',
+    length: 'short', costUsd: 0, createdBy: OWNER,
+  });
+  const voice = fakeVoice();
+  musicTools._setVoiceModuleForTests(voice);
+  try {
+    const result = await musicTools.execute(null, fakeMessage(OWNER), 'play_playlist', {}, OWNER);
+    assert.match(result, /2 song\(s\), starting with "First"/);
+    assert.equal(voice.played[0].length, 2);
+    assert.deepEqual(voice.played[0].map((s) => s.title), ['First', 'Second']);
+  } finally {
+    musicTools._setVoiceModuleForTests(null);
+  }
+}));
+
+test('play_playlist refuses an empty library', withDb(async () => {
+  musicTools._setVoiceModuleForTests(fakeVoice());
+  try {
+    const result = await musicTools.execute(null, fakeMessage(OWNER), 'play_playlist', {}, OWNER);
+    assert.match(result, /^Error:/);
+    assert.match(result, /library is empty/);
+  } finally {
+    musicTools._setVoiceModuleForTests(null);
+  }
+}));
+
+test('stop_music reports whether anything was actually stopped', withDb(async () => {
+  const voice = fakeVoice();
+  musicTools._setVoiceModuleForTests(voice);
+  try {
+    const nothing = await musicTools.execute(null, fakeMessage(OWNER), 'stop_music', {}, OWNER);
+    assert.equal(nothing, 'Nothing was playing.');
+
+    db.addSong('1', {
+      title: 'Chill Vibes', prompt: 'p', data: Buffer.from('x'), mediaType: 'audio/mpeg',
+      length: 'short', costUsd: 0, createdBy: OWNER,
+    });
+    await musicTools.execute(null, fakeMessage(OWNER), 'play_song', { song: 'Chill Vibes' }, OWNER);
+    const stopped = await musicTools.execute(null, fakeMessage(OWNER), 'stop_music', {}, OWNER);
+    assert.equal(stopped, 'Stopped the music.');
+  } finally {
+    musicTools._setVoiceModuleForTests(null);
+  }
+}));
+
+test('song library tools are refused for a non-admin, same gate as generate_music', withDb(async () => {
+  const message = fakeMessage('someone-else');
+  const result = await musicTools.execute(null, message, 'list_songs', {}, OWNER);
+  assert.match(result, /^Error:/);
+  assert.match(result, /limited to server admins/);
 }));

@@ -112,10 +112,23 @@ CREATE TABLE IF NOT EXISTS model_catalog (
     can_chat         INTEGER NOT NULL DEFAULT 0,
     fetched_at       INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS songs (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    guild_id   TEXT NOT NULL,
+    title      TEXT NOT NULL,
+    prompt     TEXT NOT NULL,
+    data       BLOB NOT NULL,
+    media_type TEXT NOT NULL,
+    length     TEXT NOT NULL,
+    cost_usd   REAL,
+    created_by TEXT,
+    created_at INTEGER NOT NULL
+);
 CREATE INDEX IF NOT EXISTS idx_warnings_guild_user ON warnings (guild_id, user_id);
 CREATE INDEX IF NOT EXISTS idx_logs_guild ON mod_logs (guild_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_memver ON memory_versions (guild_id, kind, version);
 CREATE INDEX IF NOT EXISTS idx_turns_guild_consolidated ON turns (guild_id, consolidated);
+CREATE INDEX IF NOT EXISTS idx_songs_guild ON songs (guild_id, created_at);
 `;
 
 export const MEMORY_VERSIONS_KEPT = 10;
@@ -544,6 +557,74 @@ export function clearWarnings(guildId, userId) {
   const result = db.prepare('DELETE FROM warnings WHERE guild_id = ? AND user_id = ?')
     .run(String(guildId), String(userId));
   return result.changes;
+}
+
+// -- song library -------------------------------------------------------------
+// Persistent per-guild playlist: songs kept out of generate_music's output so
+// they can be replayed later (play_song/play_playlist in musicTools.js)
+// without spending on Lyria again. Capped small on purpose — this is a
+// "keep your favorites" list curated by voice command, not an archive, so a
+// hard cap forces a deliberate swap (delete_song, then save_song) rather
+// than growing forever.
+export const SONG_LIBRARY_CAP = 10;
+
+export function countSongs(guildId) {
+  return db.prepare('SELECT COUNT(*) AS n FROM songs WHERE guild_id = ?')
+    .get(String(guildId)).n;
+}
+
+/** Metadata only, no audio blob — cheap to list. */
+export function listSongs(guildId) {
+  return db.prepare(
+    'SELECT id, title, length, cost_usd, created_at FROM songs WHERE guild_id = ? ORDER BY created_at ASC',
+  ).all(String(guildId));
+}
+
+/** One song's audio, for actually playing it. */
+export function getSongData(guildId, id) {
+  const row = db.prepare(
+    'SELECT id, title, data, media_type FROM songs WHERE guild_id = ? AND id = ?',
+  ).get(String(guildId), Number(id));
+  if (!row) return null;
+  return { id: row.id, title: row.title, data: Buffer.from(row.data), mediaType: row.media_type };
+}
+
+/** Resolve a spoken/typed song reference to one library row: an exact id, an
+ * exact title match, or — only when it's unambiguous — a partial title
+ * match. Returns null rather than guessing when more than one song matches,
+ * so musicTools.js can ask instead of playing or deleting the wrong track. */
+export function findSong(guildId, query) {
+  const gid = String(guildId);
+  const text = String(query || '').trim();
+  if (!text) return null;
+  if (/^\d+$/.test(text)) {
+    const row = db.prepare('SELECT id, title FROM songs WHERE guild_id = ? AND id = ?')
+      .get(gid, Number(text));
+    if (row) return row;
+  }
+  const rows = db.prepare('SELECT id, title FROM songs WHERE guild_id = ?').all(gid);
+  const lower = text.toLowerCase();
+  const exact = rows.find((r) => r.title.toLowerCase() === lower);
+  if (exact) return exact;
+  const partial = rows.filter((r) => r.title.toLowerCase().includes(lower));
+  return partial.length === 1 ? partial[0] : null;
+}
+
+export function addSong(guildId, {
+  title, prompt, data, mediaType, length, costUsd, createdBy,
+}) {
+  const result = db.prepare(
+    'INSERT INTO songs (guild_id, title, prompt, data, media_type, length, cost_usd, created_by, created_at) '
+    + 'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+  ).run(String(guildId), title, prompt, data, mediaType, length, costUsd ?? null,
+    createdBy ? String(createdBy) : null, now());
+  return Number(result.lastInsertRowid);
+}
+
+export function deleteSong(guildId, id) {
+  const result = db.prepare('DELETE FROM songs WHERE guild_id = ? AND id = ?')
+    .run(String(guildId), Number(id));
+  return result.changes > 0;
 }
 
 // -- moderation logs ----------------------------------------------------------

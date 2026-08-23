@@ -178,7 +178,21 @@ export const MUSIC_NOTE = (
   + 'and do not say it is on the way.\n'
   + '- This is restricted to admins, the server owner, and the bot owner. If '
   + 'someone without access asks, tell them plainly rather than pretending '
-  + "you made something."
+  + "you made something.\n"
+  + 'SONG LIBRARY. There is a persistent per-server library that holds up to '
+  + '10 saved songs, managed with save_song, list_songs, and delete_song. '
+  + 'Nothing is saved automatically — after generate_music, if they say they '
+  + 'like it and want to keep it, ask for a short title and call save_song. '
+  + "If the library is already full, save_song tells you the current titles "
+  + 'so you can ask which one to lose before saving the new one.\n'
+  + 'PLAYING MUSIC IN VOICE. play_song plays one song (a saved one by title, '
+  + 'or — with no title — whatever you just generated, so someone can hear a '
+  + "take before deciding to save it). play_playlist plays the whole library "
+  + 'back to back. Both need you to already be sitting in a voice channel. '
+  + 'stop_music stops whatever is playing and drops straight back to plain '
+  + "listening — call it any time someone asks to stop the music, pause it, "
+  + 'or wants to talk instead, and before starting something new if music is '
+  + 'already going.'
 );
 
 // Gated on the channel-brains sidecar being configured (channelBrains.js

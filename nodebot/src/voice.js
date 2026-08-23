@@ -85,6 +85,11 @@ const ACTION_BLURBS = {
   take_role: (a) => `removing the ${a.role} role from ${a.user}`,
   create_role: (a) => `creating the ${a.name} role`,
   delete_role: (a) => `deleting the ${a.role} role`,
+  play_playlist: () => 'starting the playlist',
+  play_song: (a) => (a.song ? `playing ${a.song}` : 'playing that for you'),
+  stop_music: () => 'stopping the music',
+  save_song: (a) => `saving that as "${a.title}"`,
+  delete_song: (a) => `removing "${a.song}" from the library`,
 };
 
 /** Turn raw OpenRouter tool_calls into one short, speakable "on it" line,
@@ -105,6 +110,7 @@ export function describeToolCalls(toolCalls) {
 
 const activeStreams = new Set();     // "guildId:userId" with a live subscription
 const players = new Map();           // guildId -> AudioPlayer
+const playlists = new Map();         // guildId -> { songs: [...], index: 0, active: true }
 const manualHold = new Map();        // guildId -> channelId pinned via a join command
 const notReadySince = new Map();     // guildId -> ms timestamp connection left Ready
 const lastWake = new Map();          // channelId -> ms timestamp
@@ -148,6 +154,11 @@ export function stopSpeaking(guild, channelId) {
     pending.controller?.abort();
     pendingWake.delete(channelId);
   }
+  // "Stop speaking" also means "stop the music" — a song or playlist is just
+  // the other thing that can be coming out of this same player.
+  const playlist = playlists.get(guild.id);
+  if (playlist) playlist.active = false;
+  playlists.delete(guild.id);
   const player = players.get(guild.id);
   if (player && player.state.status !== AudioPlayerStatus.Idle) player.stop(true);
 }
@@ -235,6 +246,7 @@ function leaveGuild(guild) {
   for (const c of voiceChannels(guild).values()) closeFollowUp(c.id);
   connection.destroy();
   players.delete(guild.id);
+  playlists.delete(guild.id);
 }
 
 async function rebalance(guild) {
@@ -728,6 +740,82 @@ export async function speakInVoice(guild, text) {
   return true;
 }
 
+// -- song-library playback ----------------------------------------------------
+// Shares the same AudioPlayer TTS uses (the `players` map) rather than a
+// second one, for two reasons: only one thing should ever come out of the
+// bot's mouth in a channel at a time, and it means stopSpeaking() — what
+// "Max, stop speaking/listening" already calls — stops music for free
+// instead of needing its own path.
+
+// How long to wait for the player to fall Idle before giving up on starting
+// playback. Set from musicTools.js's own tool-call flow: voice.js's respond()
+// speaks a short "on it" announcement (e.g. "starting the playlist") the
+// instant the model decides to call play_song/play_playlist, and that
+// speakInVoice() call returns as soon as playback STARTS, not when it ends —
+// so without this wait, the busy check below would see the announcement
+// still playing a beat later and refuse to start, right after promising to.
+const ANNOUNCE_WAIT_MS = 10_000;
+
+/** Start playing a list of {title, data, mediaType} songs back to back in
+ * this guild's current voice channel. Returns false — does nothing — if the
+ * bot isn't connected, or the player is still busy after ANNOUNCE_WAIT_MS
+ * (a spoken reply in progress, or a track already queued); callers should
+ * tell the user to try stop_music first rather than silently cutting off
+ * whatever that busy state actually is. */
+export async function playInVoice(guild, songs) {
+  const connection = getVoiceConnection(guild.id);
+  if (!connection || !songs?.length) return false;
+  let player = players.get(guild.id);
+  if (!player) {
+    player = createAudioPlayer({ behaviors: { noSubscriber: NoSubscriberBehavior.Pause } });
+    player.on('error', (err) => console.error('[voice] playback error:', err.message));
+    players.set(guild.id, player);
+  }
+  if (player.state.status !== AudioPlayerStatus.Idle) {
+    try {
+      await entersState(player, AudioPlayerStatus.Idle, ANNOUNCE_WAIT_MS);
+    } catch {
+      return false;
+    }
+  }
+  connection.subscribe(player);
+  const state = { songs, index: 0, active: true };
+  playlists.set(guild.id, state);
+  playNextSong(guild, player, state);
+  return true;
+}
+
+function playNextSong(guild, player, state) {
+  if (!state.active || state.index >= state.songs.length) {
+    if (playlists.get(guild.id) === state) playlists.delete(guild.id);
+    return;
+  }
+  const song = state.songs[state.index];
+  const onStateChange = (oldStatus, newStatus) => {
+    if (newStatus.status !== AudioPlayerStatus.Idle) return;
+    player.off('stateChange', onStateChange);
+    if (playlists.get(guild.id) !== state || !state.active) return; // stopped mid-track
+    state.index += 1;
+    playNextSong(guild, player, state);
+  };
+  player.on('stateChange', onStateChange);
+  player.play(createAudioResource(Readable.from(song.data)));
+}
+
+/** Stop whatever song or playlist is currently playing and drop back to plain
+ * listening. Returns whether anything was actually stopped. */
+export function stopMusic(guild) {
+  const playlist = playlists.get(guild.id);
+  if (playlist) playlist.active = false;
+  playlists.delete(guild.id);
+  const player = players.get(guild.id);
+  if (player && player.state.status !== AudioPlayerStatus.Idle) {
+    player.stop(true);
+    return true;
+  }
+  return false;
+}
+
 // -- owner control (join/leave a specific channel) ---------------------------
 
 /** Returns false if the channel isn't in voice_channel_allowlist, so the
@@ -752,4 +840,5 @@ export function _resetForTests() {
   lastWake.clear();
   lastText.clear();
   pendingWake.clear();
+  playlists.clear();
 }
