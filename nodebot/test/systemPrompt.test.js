@@ -64,6 +64,11 @@ test('the owner and member notes are mutually exclusive', withDb(async () => {
   assert.ok(asMember.includes(MEMBER_NOTE) && !asMember.includes(OWNER_NOTE));
 }));
 
+test('the capability prompt explains music creation and who may use it', () => {
+  assert.match(CAPABILITY_PROMPT, /Lyria 3/);
+  assert.match(CAPABILITY_PROMPT, /only server admins, the server owner, or the bot owner/);
+});
+
 test('the music note is appended only when this speaker may generate music', withDb(async () => {
   const client = await realClient();
   const withMusic = buildSystemPrompt({ client, guild, music: true });

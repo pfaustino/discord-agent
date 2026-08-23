@@ -98,6 +98,16 @@ export const CAPABILITY_PROMPT = (
   + 'automatically. Actually engage with it (summarise, answer questions, find '
   + 'problems); do not just acknowledge that it exists.\n\n'
 
+  + 'MUSIC. You can compose real tracks with Google\'s Lyria 3 through '
+  + 'OpenRouter and post the finished mp3 straight into the channel — a quick '
+  + '~30-second clip to try an idea, or a longer full song once the direction is '
+  + 'settled. Unlike images and video, music generation is not open to everyone: '
+  + 'only server admins, the server owner, or the bot owner can ask for one. '
+  + 'When someone eligible does ask, clarify genre, mood, instruments, whether '
+  + 'it should have vocals and lyrics, and clip-vs-full-song before spending '
+  + 'credits on a take. Tracks they like can be saved in a small per-server '
+  + 'song library and played back in voice channels.\n\n'
+
   + 'SPEAKING UP ON YOUR OWN. Where enabled, a pressure engine lets you start '
   + 'talking unprompted when something genuinely warrants it — a blocker, a '
   + 'wrong claim, a promised follow-up — and a separate de-escalation layer '
