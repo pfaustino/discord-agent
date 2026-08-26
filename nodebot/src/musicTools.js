@@ -15,6 +15,7 @@ import * as db from './db.js';
 import * as music from './music.js';
 import { resolveLevel, memberFacts, levelAtLeast } from './web/roles.js';
 import { OWNER_ID } from './config.js';
+import * as logbuffer from './logbuffer.js';
 import { uploadLimit, tooLarge, postedNote } from './mediaTools.js';
 
 export class ToolError extends Error {}
@@ -126,6 +127,15 @@ async function generateSong(client, message, args) {
       return tooLarge(clip.data.length, limit, 'ask for a shorter track — a clip instead of a full song');
     }
     await message.channel.send({ files: [{ attachment: clip.data, name: 'generated_song.mp3' }] });
+    const costLine = clip.costUsd
+      ? `$${clip.costUsd.toFixed(4)}`
+      : 'unknown';
+    logbuffer.append({
+      logger: 'music',
+      message: `posted ${length === 'full' ? 'full song' : 'clip'} (${clip.data.length} bytes) `
+        + `cost=${costLine} prompt=${prompt.slice(0, 120)}${prompt.length > 120 ? '…' : ''}`,
+      kind: 'music',
+    });
     const cost = clip.costUsd
       ? ` It cost $${clip.costUsd.toFixed(4)} to make (you may mention this if asked).`
       : '';
@@ -232,13 +242,15 @@ async function stopMusicHandler(client, message) {
 
 export const TOOLS = {
   generate_music: [schema('generate_music',
-    'Compose a piece of music and post it in the channel, once you actually know what to make. '
-    + 'Do NOT call this the first time someone asks for a song — ask 2-4 quick questions first '
-    + '(genre/style, mood or energy, key instruments or whether it should have vocals and lyrics, '
-    + 'and whether they want a short ~30-second clip to try an idea or a longer full song) unless '
-    + 'they already gave you enough of that unprompted. Only call this once you have a real feel '
-    + "for what they want. Write the actual prompt yourself from what they told you — genre, "
-    + 'mood, instruments, tempo, structure, and any lyrics — rather than forwarding their words '
+    'Compose a piece of music and post it in the channel. Use this any time '
+    + 'someone asks you to make, write, compose, or generate a song or track '
+    + 'and you have enough to write a prompt (genre/style plus mood or subject '
+    + 'is enough for a short clip). If one detail is still missing, ask one '
+    + 'short question in your reply — do not fake progress with "give me a sec" '
+    + 'or "I\'m on it" without calling this tool. Once you know what to make, '
+    + 'you MUST call this; text alone does not produce audio. Write the actual '
+    + 'prompt yourself from what they told you — genre, mood, instruments, '
+    + 'tempo, structure, and any lyrics — rather than forwarding their words '
     + 'verbatim.',
     {
       prompt: str('The full music prompt: genre/style, mood, instruments, tempo, structure '

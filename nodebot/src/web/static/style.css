@@ -258,3 +258,13 @@ label.toggle input { width: auto; accent-color: var(--accent); transform: scale(
 .console-line.system { color: #5d636e; font-style: italic; }
 .console-line.log-warn { color: #f0b232; }
 .console-line.log-err { color: #ff8085; background: rgba(218,55,60,.08); border-radius: 4px; }
+.console-line.log-voice-user { color: #56c8e8; }
+.console-line.log-voice-user .who { color: #3aa8c8; }
+.console-line.log-ai-chat { color: #c4a0ff; }
+.console-line.log-ai-chat .who { color: #9b72e8; }
+.console-line.log-music { color: #6ee7a8; }
+.console-line.log-music .who { color: #34d399; }
+.log-legend { font-weight: 600; }
+.log-legend.log-voice-user { color: #56c8e8; }
+.log-legend.log-ai-chat { color: #c4a0ff; }
+.log-legend.log-music { color: #6ee7a8; }

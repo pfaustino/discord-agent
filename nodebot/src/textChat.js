@@ -19,6 +19,7 @@ import * as memory from './memory.js';
 import { buildSystemPrompt } from './systemPrompt.js';
 import { isOwner } from './utils.js';
 import * as db from './db.js';
+import * as logbuffer from './logbuffer.js';
 
 const HISTORY_LIMIT = 40;
 const MAX_TOOL_ROUNDS = 4;
@@ -250,6 +251,11 @@ export async function handleMessage(client, message) {
       toolHandler: toolHandler(client, message, owner),
       maxToolRounds: owner ? OWNER_MAX_TOOL_ROUNDS : MAX_TOOL_ROUNDS,
       guildId,
+    });
+    logbuffer.append({
+      logger: 'chat',
+      message: `[#${channelName}] ${client.user.username}: ${reply}`,
+      kind: 'ai-chat',
     });
     recordTurn(guildId, { source: 'text', channel: channelName, speaker: client.user.username, text: reply });
     // userId null: Max doesn't get a profile card built about himself.

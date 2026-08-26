@@ -33,6 +33,11 @@ test('empty word list never matches', () => {
   assert.equal(matchesAny('hey max', []), false);
 });
 
+test('describeToolCalls produces a blurb for generate_music', () => {
+  const blurb = describeToolCalls([toolCall('generate_music', { prompt: 'reggae' })]);
+  assert.match(blurb, /on it — writing that track/);
+});
+
 test('describeToolCalls produces a known blurb for a recognized tool', () => {
   const blurb = describeToolCalls([toolCall('kick_member', { user: 'alice' })]);
   assert.equal(blurb, 'on it — kicking alice.');

@@ -36,6 +36,7 @@ import * as mediaTools from './mediaTools.js';
 import * as musicTools from './musicTools.js';
 import * as github from './github.js';
 import * as memory from './memory.js';
+import * as logbuffer from './logbuffer.js';
 import { REPO_TOOL_SCHEMAS, runRepoTool } from './textChat.js';
 import { isOwner } from './utils.js';
 import * as db from './db.js';
@@ -90,6 +91,7 @@ const ACTION_BLURBS = {
   stop_music: () => 'stopping the music',
   save_song: (a) => `saving that as "${a.title}"`,
   delete_song: (a) => `removing "${a.song}" from the library`,
+  generate_music: () => 'writing that track',
 };
 
 /** Turn raw OpenRouter tool_calls into one short, speakable "on it" line,
@@ -409,7 +411,11 @@ async function handleUtterance(guild, channel, userId, pcm) {
     return;
   }
   lastText.set(userId, [normalized, now]);
-  console.log(`[voice] [#${channel.name}] ${name}: ${text}`);
+  logbuffer.append({
+    logger: 'voice',
+    message: `[#${channel.name}] ${name}: ${text}`,
+    kind: 'voice-user',
+  });
 
   recordTurn(guild.id, { source: 'voice', channel: channel.name, speaker: name, text });
   memory.recordTurn(guild.id, name, text, {
@@ -630,6 +636,7 @@ async function respond(channel, speakerName, speakerId, state, { followUp = fals
   };
   const onToolCalls = (owner || canGenerate || canMakeMusic) ? async (toolCalls) => {
     const blurb = describeToolCalls(toolCalls);
+    logbuffer.append({ logger: 'chat', message: blurb, kind: 'ai-chat' });
     recordTurn(guild.id, { source: 'voice', channel: channel.name, speaker: self, text: blurb });
     try {
       await channel.send(blurb);
@@ -694,6 +701,11 @@ async function respond(channel, speakerName, speakerId, state, { followUp = fals
   }
 
   const display = tts.stripVoiceTags(reply) || reply;
+  logbuffer.append({
+    logger: 'chat',
+    message: `[#${channel.name}] ${self}: ${display}`,
+    kind: 'ai-chat',
+  });
   // "Coming in now." Played before the text post and the TTS, so the cue
   // leads the reply rather than trailing it. playCue resolves once the tone
   // has finished, which is also what keeps it from colliding with speech.

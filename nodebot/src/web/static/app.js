@@ -695,7 +695,12 @@ async function renderLogs() {
         <input type="checkbox" id="logs-follow" checked> follow
       </label>
     </div>
-    <div id="logs-console" class="console"><div class="muted" style="padding:8px">Loading…</div></div>`;
+    <div id="logs-console" class="console"><div class="muted" style="padding:8px">Loading…</div></div>
+    <p class="muted" style="margin-top:8px;font-size:12px">
+      <span class="log-legend log-voice-user">voice</span> user speech ·
+      <span class="log-legend log-ai-chat">chat</span> Sara replies ·
+      <span class="log-legend log-music">music</span> generation cost
+    </p>`;
   $("#logs-level").addEventListener("change", () => refreshLogs(true).catch(() => {}));
   $("#logs-filter").addEventListener("input", () => refreshLogs(true).catch(() => {}));
   await refreshLogs(true);
@@ -708,7 +713,10 @@ function logLine(e) {
   const t = new Date(e.ts * 1000).toLocaleTimeString([], { hour12: false });
   const lvl = e.level === "WARNING" ? "log-warn"
     : (e.level === "ERROR" || e.level === "CRITICAL") ? "log-err" : "";
-  return `<div class="console-line ${lvl}"><span class="t">${t}</span> ` +
+  const kind = e.kind === "voice-user" ? "log-voice-user"
+    : e.kind === "ai-chat" ? "log-ai-chat"
+    : e.kind === "music" ? "log-music" : "";
+  return `<div class="console-line ${lvl} ${kind}"><span class="t">${t}</span> ` +
     `<span class="who">${esc(e.logger)}</span> ${esc(e.message)}</div>`;
 }
 

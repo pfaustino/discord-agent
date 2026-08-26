@@ -69,6 +69,11 @@ test('the capability prompt explains music creation and who may use it', () => {
   assert.match(CAPABILITY_PROMPT, /only server admins, the server owner, or the bot owner/);
 });
 
+test('the music note forbids faking progress without calling the tool', () => {
+  assert.match(MUSIC_NOTE, /CALL generate_music/);
+  assert.match(MUSIC_NOTE, /text alone does not make music/);
+});
+
 test('the music note is appended only when this speaker may generate music', withDb(async () => {
   const client = await realClient();
   const withMusic = buildSystemPrompt({ client, guild, music: true });

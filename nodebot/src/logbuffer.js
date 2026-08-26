@@ -16,6 +16,25 @@ const MAX_LINES = 1000;
 const buffer = [];
 let counter = 0;
 let installed = false;
+const originals = {};
+
+/** Push one line into the dashboard buffer (and echo to stdout). Use for chat
+ * transcripts and other structured events that need a `kind` for styling. */
+export function append({ level = 'INFO', logger = 'bot', message, kind = null }) {
+  if (message == null || message === '') return;
+  counter += 1;
+  buffer.push({
+    id: counter,
+    ts: Date.now() / 1000,
+    level,
+    logger,
+    message: redact(String(message)),
+    kind,
+  });
+  while (buffer.length > MAX_LINES) buffer.shift();
+  const echo = originals.log || console.log.bind(console);
+  echo(`[${logger}] ${message}`);
+}
 
 // Dashboard pollers would otherwise flood the buffer with their own
 // request lines.
@@ -58,9 +77,8 @@ function record(level, parts) {
     ts: Date.now() / 1000,
     level,
     logger: loggerName(message),
-    // Belt-and-suspenders: a log line must never leak a token to the
-    // dashboard, even if something logged a raw header by mistake.
     message: redact(message),
+    kind: null,
   });
   while (buffer.length > MAX_LINES) buffer.shift();
 }
@@ -70,10 +88,10 @@ export function install() {
   if (installed) return;
   installed = true;
   for (const [method, level] of LEVELS) {
-    const original = console[method].bind(console);
+    originals[method] = console[method].bind(console);
     console[method] = (...parts) => {
       record(level, parts);
-      original(...parts);
+      originals[method](...parts);
     };
   }
 }
